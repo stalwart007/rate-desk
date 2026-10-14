@@ -1,0 +1,55 @@
+[project]
+name = "rate-desk"
+version = "1.0.0"
+description = "Pay-rate change requests with four-eyes approval, a live wall dashboard, and an MCP server for the approver's assistant."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.143,<0.144",
+    "uvicorn>=0.54,<0.55",
+    "mcp>=2.3,<3",
+    "tzdata>=2025.2",
+]
+
+[project.scripts]
+rate-desk = "rate_desk.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1",
+    "hypothesis>=6.169",
+    "httpx>=0.28",
+    "httpx2>=2.13",  # the MCP SDK's HTTP client, used directly in tests
+    "ruff>=0.17",
+    "mypy>=2.4",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rate_desk"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "PT", "ASYNC", "DTZ"]
+ignore = ["S101"]  # assert is how pytest works
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106"]  # fixture tokens are not secrets
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+files = ["src"]
+plugins = ["pydantic.mypy"]

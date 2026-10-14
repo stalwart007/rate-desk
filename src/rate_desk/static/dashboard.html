@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rate Desk</title>
+<style>
+  /* A wall display: read from across a room, never touched. Dark to cut glare,
+     big tabular numbers, and an unmissable banner whenever it is not live. */
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e;
+    --amber: #f0b429; --green: #3fb950; --red: #f85149; --blue: #58a6ff;
+    --fresh: rgba(240, 180, 41, .22);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+  body { font: 18px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         display: flex; flex-direction: column; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  header { display: flex; align-items: center; gap: 24px; padding: 18px 32px;
+           border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 28px; letter-spacing: .02em; }
+  header .tag { color: var(--muted); font-size: 16px; }
+  .spacer { flex: 1; }
+  #status { display: inline-flex; align-items: center; gap: 10px; font-weight: 700;
+            font-size: 16px; letter-spacing: .08em; text-transform: uppercase; }
+  #status::before { content: ""; width: 14px; height: 14px; border-radius: 50%;
+                    background: var(--muted); }
+  #status[data-state="live"] { color: var(--green); }
+  #status[data-state="live"]::before { background: var(--green); animation: pulse 2s infinite; }
+  #status[data-state="reconnecting"] { color: var(--amber); }
+  #status[data-state="reconnecting"]::before { background: var(--amber); }
+  #status[data-state="offline"] { color: var(--red); }
+  #status[data-state="offline"]::before { background: var(--red); }
+  #clock { font-size: 28px; font-weight: 600; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  #banner { display: none; padding: 14px 32px; background: var(--red); color: #fff;
+            font-weight: 700; font-size: 20px; }
+  #banner.show { display: block; }
+
+  main { flex: 1; display: grid; grid-template-columns: 3fr 2fr; gap: 24px; padding: 24px 32px;
+         min-height: 0; }
+  section { display: flex; flex-direction: column; min-height: 0; }
+  section h2 { margin: 0 0 14px; font-size: 18px; font-weight: 600; color: var(--muted);
+               text-transform: uppercase; letter-spacing: .1em; display: flex; gap: 12px;
+               align-items: baseline; }
+  section h2 .count { color: var(--text); font-size: 34px; letter-spacing: 0; }
+  .list { display: flex; flex-direction: column; gap: 14px; overflow: hidden; flex: 1; min-height: 0; }
+  .empty { color: var(--muted); font-size: 22px; padding: 28px 0; }
+  .more { color: var(--muted); font-size: 18px; font-weight: 600; padding: 4px 4px 0; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--amber);
+          border-radius: 10px; padding: 16px 20px; }
+  .card.enter { animation: arrive .6s ease-out; }
+  .card.fresh { background-image: linear-gradient(var(--fresh), var(--fresh)); }
+  .card.approved { border-left-color: var(--green); }
+  .card.declined { border-left-color: var(--red); }
+  .card.stale { border-left-color: var(--muted); }
+  @keyframes arrive { from { transform: translateY(-12px); opacity: 0; } }
+
+  .row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .what { font-size: 22px; font-weight: 700; }
+  .where { color: var(--muted); font-size: 18px; }
+  .id { color: var(--muted); font-size: 16px; margin-left: auto; }
+  .money { font-size: 34px; font-weight: 700; margin: 6px 0 2px; }
+  .money .arrow { color: var(--muted); padding: 0 8px; font-weight: 400; }
+  .delta { font-size: 20px; font-weight: 600; }
+  .delta.up { color: var(--amber); }
+  .delta.down { color: var(--blue); }
+  .meta { color: var(--muted); font-size: 16px; margin-top: 6px; }
+  .reason { margin-top: 8px; font-size: 17px; color: #c9d1d9; display: -webkit-box;
+            -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .reason::before { content: "\201C"; } .reason::after { content: "\201D"; }
+  .badge { font-size: 14px; font-weight: 800; letter-spacing: .08em; padding: 3px 10px;
+           border-radius: 999px; text-transform: uppercase; }
+  .badge.approved { background: rgba(63,185,80,.15); color: var(--green); }
+  .badge.declined { background: rgba(248,81,73,.15); color: var(--red); }
+  .badge.stale { background: rgba(139,148,158,.18); color: var(--text); }
+  .badge.via { background: rgba(88,166,255,.15); color: var(--blue); }
+  #decided .money { font-size: 24px; }
+
+  footer { padding: 10px 32px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line);
+           display: flex; gap: 24px; }
+
+  #setup { display: none; margin: 10vh auto; max-width: 720px; padding: 0 24px; font-size: 20px; }
+  #setup code { background: var(--panel); padding: 2px 8px; border-radius: 6px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card.enter, #status[data-state="live"]::before { animation: none; }
+  }
+
+  @media (max-width: 900px) {
+    body { font-size: 16px; }
+    header { padding: 14px 16px; flex-wrap: wrap; gap: 12px; }
+    main { grid-template-columns: 1fr; padding: 16px; }
+    .money { font-size: 26px; }
+    footer { padding: 10px 16px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Rate Desk</h1>
+  <span class="tag">Pay-rate changes · live</span>
+  <span class="spacer"></span>
+  <span id="status" data-state="connecting" role="status">Connecting</span>
+  <span id="clock" class="num"></span>
+</header>
+<div id="banner" role="alert"></div>
+
+<div id="setup">
+  <h2>This screen needs a token</h2>
+  <p>Open it as <code>/#token=YOUR_TOKEN</code>. Any Rate Desk token works; a wall display
+     should use one that can neither raise nor approve.</p>
+</div>
+
+<main id="board">
+  <section aria-labelledby="pending-title">
+    <h2 id="pending-title">Waiting for approval <span class="count num" id="pending-count">0</span></h2>
+    <div class="list" id="pending" aria-live="polite"></div>
+  </section>
+  <section aria-labelledby="decided-title">
+    <h2 id="decided-title">Recently decided</h2>
+    <div class="list" id="decided" aria-live="polite"></div>
+  </section>
+</main>
+
+<footer>
+  <span id="last-event" class="num">No events yet</span>
+  <span id="last-update" class="num"></span>
+</footer>
+
+<script>
+"use strict";
+
+// The token comes from the URL fragment, which browsers never send to the server.
+// It has to go in the stream URL, because EventSource cannot set headers; the
+// server keeps query strings out of its logs for that reason.
+const params = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+const token = params.get("token");
+
+const requests = new Map();      // id -> request, exactly as the API returns it
+const freshUntil = new Map();    // id -> time until which the card is highlighted
+const shown = new Set();         // "pending:12" etc. Cards animate in once, not on every redraw
+let lastEventId = null;
+let lastMessageAt = null;        // last change of data, shown on screen
+let lastHeardAt = Date.now();    // last anything, including heartbeats
+let source = null;
+let downSince = null;
+let retryDelay = 1000;
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;   // never innerHTML: reasons are user text
+  return node;
+};
+const money = (s) => s === null ? "none" : "£" + Number(s.split(".")[0]).toLocaleString("en-GB") + "." + s.split(".")[1];
+const time = (iso) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+function ago(iso) {
+  const mins = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+function delta(r) {
+  if (r.change === null) return el("span", "delta", "first rate for this trade");
+  const up = !r.change.startsWith("-");
+  const sign = up ? "+" : "−";
+  const pct = r.change_percent.replace("-", "");
+  const percent = pct === "0.0" ? "under 0.1%" : `${sign}${pct}%`;
+  return el("span", "delta " + (up ? "up" : "down"),
+    `${sign}${money(r.change.replace("-", ""))}/hr (${percent})`);
+}
+
+function card(r, decided) {
+  const c = el("article", "card");
+  const key = (decided ? "decided:" : "pending:") + r.id;
+  if (!shown.has(key)) { shown.add(key); c.classList.add("enter"); }
+  if (decided) c.classList.add(r.status);
+  else if (r.stale) c.classList.add("stale");
+  if ((freshUntil.get(r.id) || 0) > Date.now()) c.classList.add("fresh");
+
+  const top = el("div", "row");
+  top.append(el("span", "what", r.trade_name), el("span", "where", r.project_name));
+  if (decided) top.append(el("span", "badge " + r.status, r.status));
+  if (decided && r.decided_via === "mcp") top.append(el("span", "badge via", "via assistant"));
+  if (!decided && r.stale) top.append(el("span", "badge stale", "stale"));
+  top.append(el("span", "id num", "#" + r.id));
+  c.append(top);
+
+  const m = el("div", "money num");
+  if (r.current_rate !== null) {
+    m.append(document.createTextNode(money(r.current_rate)), el("span", "arrow", "→"));
+  }
+  m.append(document.createTextNode(money(r.requested_rate)));
+  c.append(m, delta(r));
+
+  const meta = decided
+    ? `${r.status === "approved" ? "Approved" : "Declined"} by ${r.decided_by.name} · ${time(r.decided_at)} · asked by ${r.requested_by.name}`
+    : `Asked by ${r.requested_by.name} · ${ago(r.requested_at)}`;
+  c.append(el("div", "meta", meta));
+  if (r.status === "declined") c.append(el("div", "reason", r.decline_reason));
+  else if (!decided) c.append(el("div", "reason", r.reason));
+  if (!decided && r.stale) {
+    c.append(el("div", "meta", `Rate is now ${money(r.rate_in_force)}; must be raised again.`));
+  }
+  return c;
+}
+
+function fit(list, one, many) {
+  // Never clip silently: a card the wall cannot show is replaced by a count.
+  const bottom = list.getBoundingClientRect().bottom;
+  const cards = [...list.children];
+  let hidden = 0;
+  while (cards.length && cards[cards.length - 1].getBoundingClientRect().bottom > bottom) {
+    cards.pop().remove();
+    hidden++;
+  }
+  if (!hidden) return;
+  const more = el("div", "more");
+  list.append(more);
+  for (;;) {
+    more.textContent = `+ ${hidden} ${hidden === 1 ? one : many} not shown`;
+    if (more.getBoundingClientRect().bottom <= bottom || !cards.length) return;
+    cards.pop().remove();   // the count line itself needs room
+    hidden++;
+  }
+}
+
+function render() {
+  const all = [...requests.values()];
+  // Newest first, so a request arriving is always seen arriving, at the top.
+  const pending = all.filter((r) => r.status === "pending").sort((a, b) => b.id - a.id);
+  const decided = all.filter((r) => r.status !== "pending")
+    .sort((a, b) => b.decided_at.localeCompare(a.decided_at)).slice(0, 12);
+
+  $("pending-count").textContent = pending.length;
+  $("pending").replaceChildren(...(pending.length ? pending.map((r) => card(r, false))
+    : [el("div", "empty", "Nothing waiting.")]));
+  $("decided").replaceChildren(...(decided.length ? decided.map((r) => card(r, true))
+    : [el("div", "empty", "No decisions yet.")]));
+  fit($("pending"), "older request", "older requests");
+  fit($("decided"), "earlier decision", "earlier decisions");
+  $("last-event").textContent = lastEventId ? `Last event #${lastEventId}` : "No events yet";
+  $("last-update").textContent = lastMessageAt ? `Updated ${lastMessageAt.toLocaleTimeString("en-GB")}` : "";
+}
+
+function setStatus(state, label) {
+  const s = $("status");
+  s.dataset.state = state;
+  s.textContent = label;
+  const banner = $("banner");
+  if (state === "live") {
+    downSince = null;
+    banner.classList.remove("show");
+  } else if (downSince === null) {
+    downSince = Date.now();
+  }
+}
+
+function checkStale() {
+  // Brief blips are normal (deploys, Wi-Fi). After 10 s, say loudly that this is not live.
+  if (downSince !== null && Date.now() - downSince > 10000) {
+    const since = lastMessageAt ? lastMessageAt.toLocaleTimeString("en-GB") : "never";
+    $("banner").textContent = `NOT LIVE: reconnecting. What you see is as of ${since}.`;
+    $("banner").classList.add("show");
+  }
+}
+
+function onEvent(e) {
+  lastHeardAt = Date.now();
+  lastEventId = e.lastEventId || lastEventId;
+  lastMessageAt = new Date();
+  const data = JSON.parse(e.data);
+  const r = data.request;
+  freshUntil.set(r.id, Date.now() + 15000);
+  requests.set(r.id, r);
+  render();
+}
+
+function connect() {
+  // EventSource resumes by itself after a dropped connection, sending Last-Event-ID.
+  // If the server answers with an error (say, a proxy 502 mid-deploy), EventSource
+  // gives up for good; then we reopen it ourselves, passing ?since= to resume.
+  let url = "/api/events/stream?access_token=" + encodeURIComponent(token);
+  if (lastEventId) url += "&since=" + encodeURIComponent(lastEventId);
+  source = new EventSource(url);
+
+  source.onopen = () => { retryDelay = 1000; lastHeardAt = Date.now(); setStatus("live", "Live"); };
+  source.addEventListener("heartbeat", () => { lastHeardAt = Date.now(); });
+  source.addEventListener("snapshot", (e) => {
+    lastHeardAt = Date.now();
+    const snap = JSON.parse(e.data);
+    requests.clear();
+    for (const r of [...snap.pending, ...snap.recently_decided]) requests.set(r.id, r);
+    lastEventId = e.lastEventId;
+    lastMessageAt = new Date();
+    setStatus("live", "Live");
+    render();
+  });
+  // "updated": a waiting request went stale because another one was approved.
+  for (const type of ["request.raised", "request.approved", "request.declined", "request.updated"]) {
+    source.addEventListener(type, onEvent);
+  }
+  source.onerror = () => {
+    if (source.readyState === EventSource.CLOSED) {
+      setStatus("offline", "Offline");
+      source = null;
+      setTimeout(connect, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 30000);
+    } else {
+      setStatus("reconnecting", "Reconnecting");
+    }
+  };
+}
+
+function tick() {
+  $("clock").textContent = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  // The server sends a heartbeat every 15 s. Hearing nothing for 40 s means the
+  // connection died without telling us (Wi-Fi, NAT): drop it and start again.
+  if (source && Date.now() - lastHeardAt > 40000) {
+    source.close();
+    source = null;
+    setStatus("reconnecting", "Reconnecting");
+    lastHeardAt = Date.now();
+    connect();
+  }
+  checkStale();
+}
+
+function needToken(state) {
+  $("board").style.display = "none";
+  $("setup").style.display = "block";
+  $("status").dataset.state = "offline";   // not setStatus: nothing is reconnecting here
+  $("status").textContent = state;
+}
+
+if (!token) {
+  needToken("No token");
+} else {
+  // EventSource cannot tell a bad token from a network error, so ask once up front.
+  fetch("/api/me", { headers: { Authorization: "Bearer " + token } })
+    .then((res) => (res.status === 401 ? needToken("Token rejected") : connect()))
+    .catch(connect);
+}
+window.addEventListener("hashchange", () => location.reload());  // a new token was pasted in
+window.addEventListener("resize", render);
+tick();
+setInterval(tick, 1000);
+setInterval(render, 30000);   // keep "12 min ago" honest and let highlights fade
+</script>
+</body>
+</html>

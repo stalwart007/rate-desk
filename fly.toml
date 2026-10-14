@@ -1,0 +1,31 @@
+# Fly.io: one machine, one volume. SQLite means exactly one machine. See DECISIONS.md.
+app = "rate-desk-tag"
+primary_region = "lhr"
+
+[env]
+  RATE_DESK_DB = "/data/rate-desk.db"
+  RATE_DESK_PUBLIC_URL = "https://rate-desk-tag.fly.dev"
+  RATE_DESK_DEMO = "1"
+
+[[mounts]]
+  source = "rate_desk_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Stay up: the wall display and MCP sessions hold connections open.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  path = "/healthz"
+  timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
