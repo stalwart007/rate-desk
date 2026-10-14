@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from rate_desk.db import Database
+from rate_desk.db import SCHEMA_VERSION, Database
 from rate_desk.domain import Channel
 from tests.conftest import World
 
@@ -130,6 +130,6 @@ def test_several_processes_starting_on_a_new_file_create_the_schema_once(
         list(pool.map(lambda _: Database(path).migrate(), range(8)))
     conn = Database(path).connect()
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     finally:
         conn.close()

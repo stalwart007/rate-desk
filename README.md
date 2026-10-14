@@ -39,9 +39,25 @@ Every call is made as somebody. The token says who, and what they may do.
 | `rd_demo_priya` | Priya Shah, commercial director | ✓ | ✓ |
 | `rd_demo_tom` | Tom Reid, operations director | | ✓ |
 | `rd_demo_wall` | The wall display | | |
+| `rd_demo_tester` | **Tester**: plays any of the people above, from the dashboard | (as them) | (as them) |
 
 These tokens are public on purpose, for the demo. For real users, `rate-desk add-user "Name" --can-approve`
 prints a random token once and stores only its hash.
+
+### Try every role from the dashboard (the tester token)
+
+Open <http://127.0.0.1:8000/#token=rd_demo_tester>. A tester bar lets you choose who you are
+acting as, raise requests, and approve or decline from the cards, all on the live wall.
+
+* The buttons are there whoever you act as, **on purpose**: the server decides. Approve as Dave and
+  it says he can't approve; approve a request Priya raised while acting as Priya and four-eyes refuses.
+* Acting as someone gives exactly their rights, nothing more. The tester has none of its own.
+* Everything the tester does is recorded twice: as the person (`decided_by`) and as the tester
+  (`decided_by_proxy`), and the cards say **via tester**.
+* It only works on a demo server (`--demo` / `RATE_DESK_DEMO=1`). Elsewhere `X-Act-As` is refused,
+  and `add-user` cannot create a tester. See DECISIONS.md, part 4.
+
+The same works from a terminal with an `X-Act-As: <person id>` header (ids from `GET /api/people`).
 
 ### Try it from a terminal
 
@@ -139,6 +155,7 @@ the public demo tokens above. Anyone with the link can use it, and it may be res
 | | |
 |---|---|
 | Wall dashboard | <https://rate-desk-tag.fly.dev/#token=rd_demo_wall> |
+| **Try every role** (tester) | <https://rate-desk-tag.fly.dev/#token=rd_demo_tester> |
 | API docs | <https://rate-desk-tag.fly.dev/docs> |
 
 Point your own Claude Code at it, with nothing to install:
@@ -167,6 +184,7 @@ never a JSON number. Full schemas are at `/docs`.
 | `GET` | `/api/projects/{code}/rates?as_of=` | Rates in force, now or at a past moment |
 | `GET` | `/api/projects/{code}/trades/{trade}/history` | Every rate a trade has had, and which request set it |
 | `GET` | `/api/events/stream` | Server-Sent Events for the dashboard (`?access_token=` for browsers) |
+| `GET` | `/api/people` | Tester only: who it can act as. Writes then take `X-Act-As: <id>` (demo servers only) |
 
 Every refusal is `{"code", "message"}`: 401 no or bad token, 403 not allowed or your own request,
 404 unknown, 409 already decided / stale / wrong "rate now", 422 invalid input.
@@ -179,7 +197,7 @@ moment. A `heartbeat` every 15 s lets the page notice a connection that died sil
 ## Checks
 
 ```bash
-uv run pytest          # 157 tests: rules, races between threads and processes, DB constraints, API, live stream, MCP
+uv run pytest          # 171 tests: rules, races between threads and processes, DB constraints, API, live stream, MCP
 uv run ruff check      # lint
 uv run ruff format --check
 uv run mypy            # strict type checking
@@ -194,7 +212,8 @@ src/rate_desk/
   money.py        Money as integer pence; parsing, formatting, percentage
   domain.py       Request, Rate, Outcome, User: plain immutable records
   errors.py       Every refusal, each with a stable code
-  schema.sql      Tables, constraints and triggers: the rules, again, in the database
+  schema.sql      Tables, constraints and triggers: the rules, again, in the database (version 1)
+  migrations/     Later schema versions, applied in order on start (002: the demo tester)
   db.py           Connections and transactions (BEGIN IMMEDIATE for writes)
   service.py      All the rules, in one place. Everything else is an adapter over this
   explain.py      Plain-English descriptions, written by code, not a model

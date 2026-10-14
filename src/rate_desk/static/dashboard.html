@@ -84,6 +84,43 @@
   footer { padding: 10px 32px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line);
            display: flex; gap: 24px; }
 
+  /* Tester mode, for the demo tester token only: one person can play every role. */
+  #tester { display: none; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 32px;
+            border-bottom: 1px solid var(--line); background: #11161d; font-size: 16px; }
+  body.testing #tester { display: flex; }
+  .tester-tag { font-size: 13px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+                color: var(--bg); background: var(--blue); padding: 3px 10px; border-radius: 999px; }
+  .tester-hint { color: var(--muted); font-size: 14px; }
+  #people { display: flex; gap: 6px; flex-wrap: wrap; }
+  #people .rights { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  #people button[aria-pressed="true"] { background: rgba(88,166,255,.18); border-color: var(--blue); }
+  button { font: inherit; font-size: 15px; color: var(--text); background: var(--panel);
+           border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  button.primary { background: var(--blue); border-color: var(--blue); color: var(--bg); font-weight: 700; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; }
+  .actions .approve { border-color: var(--green); color: var(--green); }
+  .actions .decline { border-color: var(--red); color: var(--red); }
+  .badge.tester { background: rgba(240,180,41,.15); color: var(--amber); }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+           border-radius: 12px; padding: 20px 24px; width: min(520px, 92vw); }
+  dialog::backdrop { background: rgba(0, 0, 0, .6); }
+  dialog h3 { margin: 0 0 8px; font-size: 20px; }
+  dialog label { display: block; font-size: 14px; color: var(--muted); margin: 12px 0 4px; }
+  dialog input, dialog select, dialog textarea { width: 100%; font: inherit; font-size: 16px;
+           color: var(--text); background: var(--bg); border: 1px solid var(--line);
+           border-radius: 8px; padding: 8px 10px; }
+  dialog .hint { font-size: 14px; color: var(--muted); margin-top: 6px; }
+  dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  #toasts { position: fixed; right: 24px; bottom: 56px; display: flex; flex-direction: column;
+            gap: 8px; z-index: 10; max-width: min(460px, 90vw); }
+  .toast { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--green);
+           border-radius: 8px; padding: 10px 14px; font-size: 15px; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+  .toast.error { border-left-color: var(--red); }
+  .toast .code { font-weight: 800; color: var(--red); margin-right: 8px; text-transform: uppercase;
+                 font-size: 12px; letter-spacing: .08em; }
+
   #setup { display: none; margin: 10vh auto; max-width: 720px; padding: 0 24px; font-size: 20px; }
   #setup code { background: var(--panel); padding: 2px 8px; border-radius: 6px; }
 
@@ -95,6 +132,7 @@
     body { font-size: 16px; }
     header { padding: 14px 16px; flex-wrap: wrap; gap: 12px; }
     main { grid-template-columns: 1fr; padding: 16px; }
+    #tester { padding: 12px 16px; }
     .money { font-size: 26px; }
     footer { padding: 10px 16px; }
   }
@@ -109,6 +147,15 @@
   <span id="clock" class="num"></span>
 </header>
 <div id="banner" role="alert"></div>
+
+<div id="tester" role="region" aria-label="Tester controls">
+  <span class="tester-tag">Tester</span>
+  <span>Acting as</span>
+  <div id="people" role="group" aria-label="Who to act as"></div>
+  <button id="raise-open" class="primary" type="button">Raise a request</button>
+  <span class="spacer"></span>
+  <span class="tester-hint">The server enforces every rule: try approving as the person who asked.</span>
+</div>
 
 <div id="setup">
   <h2>This screen needs a token</h2>
@@ -132,6 +179,41 @@
   <span id="last-update" class="num"></span>
 </footer>
 
+<dialog id="raise-dialog" aria-labelledby="raise-title">
+  <form id="raise-form">
+    <h3 id="raise-title">Raise a request</h3>
+    <label for="f-project">Project</label>
+    <select id="f-project" required></select>
+    <label for="f-trade">Trade</label>
+    <select id="f-trade" required></select>
+    <label for="f-current">Rate now (£ an hour)</label>
+    <input id="f-current" inputmode="decimal" autocomplete="off" placeholder="empty if there is no rate yet">
+    <div class="hint" id="f-hint"></div>
+    <label for="f-requested">Rate asked for (£ an hour)</label>
+    <input id="f-requested" inputmode="decimal" autocomplete="off" required placeholder="e.g. 24.50">
+    <label for="f-reason">Reason</label>
+    <textarea id="f-reason" rows="3" maxlength="2000" required></textarea>
+    <div class="buttons">
+      <button type="button" data-close>Cancel</button>
+      <button type="submit" class="primary">Raise</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="decline-dialog" aria-labelledby="decline-title">
+  <form id="decline-form">
+    <h3 id="decline-title">Decline</h3>
+    <label for="d-reason">Reason (the person who asked will see this)</label>
+    <textarea id="d-reason" rows="3" maxlength="2000" required></textarea>
+    <div class="buttons">
+      <button type="button" data-close>Cancel</button>
+      <button type="submit" class="primary">Decline</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toasts" aria-live="assertive"></div>
+
 <script>
 "use strict";
 
@@ -150,6 +232,14 @@ let lastHeardAt = Date.now();    // last anything, including heartbeats
 let source = null;
 let downSince = null;
 let retryDelay = 1000;
+
+// Tester mode: the demo tester token can act as each demo person. The server
+// decides what each person may do; this page only says who is acting.
+let testing = false;
+let people = [];
+let actingAs = null;
+let declining = null;          // id of the request in the decline dialog
+let ratesInForce = new Map();  // trade code -> rate, for the chosen project
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -192,6 +282,7 @@ function card(r, decided) {
   top.append(el("span", "what", r.trade_name), el("span", "where", r.project_name));
   if (decided) top.append(el("span", "badge " + r.status, r.status));
   if (decided && r.decided_via === "mcp") top.append(el("span", "badge via", "via assistant"));
+  if (decided ? r.decided_by_proxy : r.raised_by_proxy) top.append(el("span", "badge tester", "via tester"));
   if (!decided && r.stale) top.append(el("span", "badge stale", "stale"));
   top.append(el("span", "id num", "#" + r.id));
   c.append(top);
@@ -211,6 +302,16 @@ function card(r, decided) {
   else if (!decided) c.append(el("div", "reason", r.reason));
   if (!decided && r.stale) {
     c.append(el("div", "meta", `Rate is now ${money(r.rate_in_force)}; must be raised again.`));
+  }
+  if (testing && !decided) {
+    // Shown whoever you are acting as, on purpose: the server, not the page, refuses.
+    const approve = button("Approve", "approve");
+    approve.onclick = () => attempt(() => api("POST", `/api/requests/${r.id}/approve`), `Approved #${r.id}`);
+    const decline = button("Decline…", "decline");
+    decline.onclick = () => openDecline(r.id);
+    const actions = el("div", "actions");
+    actions.append(approve, decline);
+    c.append(actions);
   }
   return c;
 }
@@ -336,6 +437,136 @@ function tick() {
   checkStale();
 }
 
+function button(text, cls) {
+  const b = el("button", cls, text);
+  b.type = "button";
+  return b;
+}
+
+const rights = (p) =>
+  [p.can_raise && "raise", p.can_approve && "approve"].filter(Boolean).join(" + ") || "watch only";
+
+function renderPeople() {
+  $("people").replaceChildren(...people.map((p) => {
+    const b = button(p.name);
+    b.append(el("span", "rights", rights(p)));
+    b.setAttribute("aria-pressed", String(p.id === actingAs.id));
+    b.onclick = () => { actingAs = p; renderPeople(); };
+    return b;
+  }));
+}
+
+async function api(method, path, body) {
+  const headers = { Authorization: "Bearer " + token };
+  if (method !== "GET") headers["X-Act-As"] = String(actingAs.id);
+  if (body) headers["Content-Type"] = "application/json";
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.message || res.statusText);
+    err.code = data.code || String(res.status);
+    throw err;
+  }
+  return data;
+}
+
+function toast(text, code) {
+  const t = el("div", "toast" + (code ? " error" : ""));
+  if (code) t.append(el("span", "code", code.replace("_", " ")));
+  t.append(document.createTextNode(text));
+  $("toasts").append(t);
+  setTimeout(() => t.remove(), code ? 9000 : 5000);
+}
+
+async function attempt(action, done) {
+  const who = actingAs.name;
+  try {
+    const result = await action();
+    toast(`${typeof done === "function" ? done(result) : done}, as ${who}.`);
+    return true;
+  } catch (err) {
+    toast(err.message, err.code);   // the server's own words: four eyes, stale, not permitted...
+    return false;
+  }
+}
+
+const option = (value, text) => { const o = el("option", "", text); o.value = value; return o; };
+
+async function openRaise() {
+  $("raise-title").textContent = `Raise a request as ${actingAs.name}`;
+  if (!$("f-project").options.length) {
+    const [projects, trades] = await Promise.all([api("GET", "/api/projects"), api("GET", "/api/trades")]);
+    $("f-project").replaceChildren(...projects.map((p) => option(p.code, p.name)));
+    $("f-trade").replaceChildren(...trades.map((t) => option(t.code, t.name)));
+  }
+  await loadRates();
+  $("raise-dialog").showModal();
+}
+
+async function loadRates() {
+  const body = await api("GET", `/api/projects/${encodeURIComponent($("f-project").value)}/rates`);
+  ratesInForce = new Map(body.rates.map((r) => [r.trade, r.rate]));
+  fillRateNow();
+}
+
+function fillRateNow() {
+  // Filled in for you; change it to watch the server refuse a wrong "rate now".
+  const rate = ratesInForce.get($("f-trade").value);
+  $("f-current").value = rate || "";
+  $("f-hint").textContent = rate
+    ? `In force now: ${money(rate)} an hour. Change it to see the "rate now" check refuse.`
+    : "No rate yet for this trade here: leave it empty to set the first one.";
+}
+
+function openDecline(id) {
+  declining = id;
+  $("decline-title").textContent = `Decline #${id} as ${actingAs.name}`;
+  $("d-reason").value = "";
+  $("decline-dialog").showModal();
+}
+
+async function startTesting() {
+  try {
+    people = await api("GET", "/api/people");
+  } catch (err) {
+    toast(err.message, err.code);
+    return;
+  }
+  testing = true;
+  document.body.classList.add("testing");
+  actingAs = people.find((p) => p.can_raise) || people[0];
+  renderPeople();
+  $("raise-open").onclick = () => openRaise().catch((err) => toast(err.message, err.code));
+  $("f-project").onchange = () => loadRates().catch((err) => toast(err.message, err.code));
+  $("f-trade").onchange = fillRateNow;
+  $("raise-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const now = $("f-current").value.trim();
+    const ok = await attempt(() => api("POST", "/api/requests", {
+      project: $("f-project").value,
+      trade: $("f-trade").value,
+      current_rate: now === "" ? null : now,
+      requested_rate: $("f-requested").value.trim(),
+      reason: $("f-reason").value.trim(),
+    }), (r) => `Raised #${r.id}`);
+    if (ok) {
+      $("raise-dialog").close();
+      $("f-requested").value = "";
+      $("f-reason").value = "";
+    }
+  };
+  $("decline-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const ok = await attempt(() => api("POST", `/api/requests/${declining}/decline`,
+      { reason: $("d-reason").value.trim() }), `Declined #${declining}`);
+    if (ok) $("decline-dialog").close();
+  };
+  for (const close of document.querySelectorAll("[data-close]")) {
+    close.onclick = () => close.closest("dialog").close();
+  }
+  render();
+}
+
 function needToken(state) {
   $("board").style.display = "none";
   $("setup").style.display = "block";
@@ -347,8 +578,14 @@ if (!token) {
   needToken("No token");
 } else {
   // EventSource cannot tell a bad token from a network error, so ask once up front.
+  // The answer also says whether this is the demo tester, who gets the controls.
   fetch("/api/me", { headers: { Authorization: "Bearer " + token } })
-    .then((res) => (res.status === 401 ? needToken("Token rejected") : connect()))
+    .then(async (res) => {
+      if (res.status === 401) return needToken("Token rejected");
+      const me = res.ok ? await res.json() : null;
+      if (me && me.can_act_as_others) await startTesting();
+      connect();
+    })
     .catch(connect);
 }
 window.addEventListener("hashchange", () => location.reload());  // a new token was pasted in

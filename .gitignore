@@ -10,3 +10,4 @@ __pycache__/
 .hypothesis/
 dist/
 build/
+.DS_Store

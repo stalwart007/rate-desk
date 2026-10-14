@@ -37,6 +37,22 @@ class User:
     name: str
     can_raise: bool
     can_approve: bool
+    # Demo only: the tester, who may act as the other demo people. Never
+    # granted outside the demo seed, and honoured only on a demo server.
+    can_act_as_others: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Actor:
+    """Who an action is done as, and who actually did it.
+
+    Normally the same person, so ``proxy`` is None. When the demo tester acts
+    as Dave, ``user`` is Dave (his rights apply, and four-eyes is checked
+    against him) and ``proxy`` is the tester, recorded in the audit trail.
+    """
+
+    user: User
+    proxy: User | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +113,9 @@ class RateChangeRequest:
     decided_via: Channel | None
     decline_reason: str | None
     outcome: Outcome | None
+    # The tester, when they raised or decided this while acting as someone else.
+    raised_by_proxy: User | None
+    decided_by_proxy: User | None
     # The rate in force for this project and trade right now, whatever the request says.
     rate_in_force: Money | None
 

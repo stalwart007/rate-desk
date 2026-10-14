@@ -14,7 +14,10 @@ from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+# Each file moves the schema up one version; PRAGMA user_version records where
+# a database is. Never edit a released file: add the next one.
+MIGRATIONS = ["schema.sql", "migrations/002_tester.sql"]
+SCHEMA_VERSION = len(MIGRATIONS)
 
 
 def to_db_time(moment: datetime) -> str:
@@ -76,28 +79,33 @@ class Database:
         finally:
             conn.close()
 
-    def migrate(self) -> None:
-        """Create the schema if this is a new database. Safe to call on every start."""
+    def migrate(self, *, target: int = SCHEMA_VERSION) -> None:
+        """Bring the schema up to date, one version at a time. Safe to call on every start.
+
+        All the steps run in one transaction: a database is either fully
+        upgraded or left exactly as it was.
+        """
         conn = self.connect()
         try:
             # WAL lets readers (the dashboard stream) carry on while a write is
             # in progress. It is a property of the file, so setting it once sticks.
             conn.execute("PRAGMA journal_mode = WAL")
-            # Read the version under the write lock, so two processes starting on a
-            # new file cannot both decide to create the schema.
+            # Read the version under the write lock, so two processes starting on
+            # the same file cannot both decide to apply the same step.
             conn.execute("BEGIN IMMEDIATE")
             try:
                 version = conn.execute("PRAGMA user_version").fetchone()[0]
-                if version != 0 and version != SCHEMA_VERSION:
+                if version > SCHEMA_VERSION:
                     raise RuntimeError(
                         f"database {self.path} is at schema version {version}; "
-                        f"this build knows version {SCHEMA_VERSION}"
+                        f"this build only knows up to version {SCHEMA_VERSION}"
                     )
-                if version == 0:
-                    schema = files("rate_desk").joinpath("schema.sql").read_text(encoding="utf-8")
-                    for statement in _split_sql(schema):
+                for step in range(version, target):
+                    script = files("rate_desk").joinpath(MIGRATIONS[step])
+                    for statement in _split_sql(script.read_text(encoding="utf-8")):
                         conn.execute(statement)
-                    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                if target > version:
+                    conn.execute(f"PRAGMA user_version = {target}")
             except BaseException:
                 conn.execute("ROLLBACK")
                 raise
@@ -107,7 +115,7 @@ class Database:
 
 
 def _split_sql(script: str) -> Iterator[str]:
-    """Split a schema script into statements, keeping trigger bodies whole.
+    """Split a migration script into statements, keeping trigger bodies whole.
 
     ``executescript`` would do this, but it commits first, so it cannot run
     inside our transaction. A schema half-created is worse than none.
@@ -122,4 +130,4 @@ def _split_sql(script: str) -> Iterator[str]:
             yield candidate
             buffer = []
     if any(part.strip() for part in buffer):
-        raise ValueError("schema.sql ends with an incomplete statement")
+        raise ValueError("a migration ends with an incomplete statement")

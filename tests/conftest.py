@@ -51,6 +51,7 @@ class World:
     priya: User  # raises and approves
     tom: User  # approves
     wall: User  # does neither
+    tester: User  # demo only: acts as the others
 
     TOKENS: ClassVar[dict[str, str]] = {
         "dave": "t-dave",
@@ -58,6 +59,7 @@ class World:
         "priya": "t-priya",
         "tom": "t-tom",
         "wall": "t-wall",
+        "tester": "t-tester",
     }
 
     def raise_ganger(
@@ -88,6 +90,7 @@ def build_world(db_path: Path, clock: Clock | None = None) -> World:
             name.title(),
             can_raise=name in {"dave", "sam", "priya"},
             can_approve=name in {"priya", "tom"},
+            can_act_as_others=name == "tester",
             token=token,
         )[0]
         for name, token in World.TOKENS.items()

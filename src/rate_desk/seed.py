@@ -20,6 +20,10 @@ DEMO_USERS = [
     ("Wall display", False, False, "rd_demo_wall"),  # can only watch
 ]
 
+# Demo only: one token that can act as any of the people above, from the wall
+# dashboard, so interviewers can try every role without juggling tokens.
+TESTER = ("Tester", "rd_demo_tester")
+
 PROJECTS = [
     ("riverside-viaduct", "Riverside Viaduct Strengthening"),
     ("northfleet-depot", "Northfleet Rail Depot"),
@@ -72,8 +76,15 @@ INJECTION = (
 
 
 def seed_demo(service: RateDesk, *, only_if_empty: bool = False) -> dict[str, str]:
-    """Load the demo. Returns {name: token}. With ``only_if_empty``, does nothing if users exist."""
+    """Load the demo. Returns {name: token}. With ``only_if_empty``, does nothing if users exist,
+    except add the tester to a demo database created before the tester existed."""
     if only_if_empty and service.has_users():
+        if not service.has_tester():
+            name, token = TESTER
+            service.add_user(
+                name, can_raise=False, can_approve=False, can_act_as_others=True, token=token
+            )
+            return {name: token}
         return {}
 
     people = {}
@@ -83,6 +94,11 @@ def seed_demo(service: RateDesk, *, only_if_empty: bool = False) -> dict[str, st
             name, can_raise=can_raise, can_approve=can_approve, token=token
         )
         people[name.split()[0].lower()] = user
+    tester_name, tester_token = TESTER
+    service.add_user(
+        tester_name, can_raise=False, can_approve=False, can_act_as_others=True, token=tester_token
+    )
+    tokens[tester_name] = tester_token
     for code, name in PROJECTS:
         service.add_project(code, name)
     for code, name in TRADES:

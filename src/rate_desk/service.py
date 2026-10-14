@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 from rate_desk.db import Database, from_db_time, to_db_time
 from rate_desk.domain import (
+    Actor,
     Channel,
     Event,
     EventType,
@@ -85,7 +86,7 @@ class RateDesk:
     def authenticate(self, token: str) -> User:
         with self._db.read() as conn:
             row = conn.execute(
-                "SELECT id, name, can_raise, can_approve FROM users WHERE token_sha256 = ?",
+                f"{_USER_COLUMNS} WHERE token_sha256 = ?",
                 (hash_token(token),),
             ).fetchone()
         if row is None:
@@ -98,26 +99,55 @@ class RateDesk:
 
     def get_user(self, user_id: int) -> User:
         with self._db.read() as conn:
-            row = conn.execute(
-                "SELECT id, name, can_raise, can_approve FROM users WHERE id = ?", (user_id,)
-            ).fetchone()
+            row = conn.execute(f"{_USER_COLUMNS} WHERE id = ?", (user_id,)).fetchone()
         if row is None:
             raise Unauthenticated("that user no longer exists")
         return _user(row)
 
     def add_user(
-        self, name: str, *, can_raise: bool, can_approve: bool, token: str | None = None
+        self,
+        name: str,
+        *,
+        can_raise: bool,
+        can_approve: bool,
+        can_act_as_others: bool = False,
+        token: str | None = None,
     ) -> tuple[User, str]:
         """Create a user and return their token. The token is not stored, only its hash."""
         token = token or "rd_" + secrets.token_urlsafe(32)
         with self._db.write() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (name, token_sha256, can_raise, can_approve)"
-                " VALUES (?, ?, ?, ?)",
-                (name, hash_token(token), int(can_raise), int(can_approve)),
+                "INSERT INTO users (name, token_sha256, can_raise, can_approve, can_act_as_others)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (name, hash_token(token), int(can_raise), int(can_approve), int(can_act_as_others)),
             )
         assert cursor.lastrowid is not None
-        return User(cursor.lastrowid, name, can_raise, can_approve), token
+        user = User(cursor.lastrowid, name, can_raise, can_approve, can_act_as_others)
+        return user, token
+
+    def has_tester(self) -> bool:
+        with self._db.read() as conn:
+            row = conn.execute("SELECT 1 FROM users WHERE can_act_as_others = 1 LIMIT 1")
+            return row.fetchone() is not None
+
+    def people(self, *, caller: User) -> list[User]:
+        """Everyone the demo tester can act as."""
+        _require_tester(caller)
+        with self._db.read() as conn:
+            rows = conn.execute(f"{_USER_COLUMNS} WHERE can_act_as_others = 0 ORDER BY id")
+            return [_user(row) for row in rows.fetchall()]
+
+    def act_as(self, caller: User, user_id: int) -> Actor:
+        """The demo tester stepping into someone else's shoes, with only that person's rights."""
+        _require_tester(caller)
+        with self._db.read() as conn:
+            row = conn.execute(f"{_USER_COLUMNS} WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            raise NotFound(f"There is no person #{user_id} to act as")
+        target = _user(row)
+        if target.can_act_as_others:
+            raise InvalidRequest("a tester can only act as the ordinary demo people")
+        return Actor(target, proxy=caller)
 
     # ------------------------------------------------------------ reference data
 
@@ -175,8 +205,10 @@ class RateDesk:
         current: Money | None,
         requested: Money,
         reason: str,
+        proxy: User | None = None,
     ) -> RateChangeRequest:
         """Record a request. Rule 1: this writes no rate. Nothing changes until approval."""
+        _check_proxy(by, proxy)
         if not by.can_raise:
             raise NotPermitted(f"{by.name} is not allowed to raise rate changes")
         reason = _required_text(reason, "a reason")
@@ -199,8 +231,8 @@ class RateDesk:
             cursor = conn.execute(
                 "INSERT INTO rate_change_requests"
                 " (project_code, trade_code, current_pence, requested_pence, reason,"
-                "  requested_by, requested_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "  requested_by, requested_at, raised_by_proxy)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     project,
                     trade,
@@ -209,6 +241,7 @@ class RateDesk:
                     reason,
                     by.id,
                     now,
+                    None if proxy is None else proxy.id,
                 ),
             )
             assert cursor.lastrowid is not None
@@ -269,7 +302,9 @@ class RateDesk:
         _check_decidable(request, by, "decline")
         return request
 
-    def approve(self, request_id: int, *, by: User, via: Channel) -> RateChangeRequest:
+    def approve(
+        self, request_id: int, *, by: User, via: Channel, proxy: User | None = None
+    ) -> RateChangeRequest:
         """Approve a request. The new rate takes effect now, in this transaction, and not before.
 
         Rule 3 is enforced four times over: the status check below runs while
@@ -277,6 +312,7 @@ class RateDesk:
         rates table allows one rate per source request; and a trigger refuses
         any change to a decided request.
         """
+        _check_proxy(by, proxy)
         with self._db.write() as conn:
             request = _load_request(conn, request_id)
             _check_approvable(request, by)
@@ -306,9 +342,17 @@ class RateDesk:
             updated = conn.execute(
                 "UPDATE rate_change_requests"
                 " SET status = 'approved', decided_by = ?, decided_at = ?, decided_via = ?,"
-                "     previous_rate_id = ?, resulting_rate_id = ?"
+                "     previous_rate_id = ?, resulting_rate_id = ?, decided_by_proxy = ?"
                 " WHERE id = ? AND status = 'pending'",
-                (by.id, now, via.value, previous_rate_id, inserted.lastrowid, request.id),
+                (
+                    by.id,
+                    now,
+                    via.value,
+                    previous_rate_id,
+                    inserted.lastrowid,
+                    None if proxy is None else proxy.id,
+                    request.id,
+                ),
             )
             if updated.rowcount != 1:  # unreachable while we hold the write lock
                 raise AlreadyDecided(f"Request #{request.id} has already been decided")
@@ -326,8 +370,17 @@ class RateDesk:
         self._changed()
         return approved
 
-    def decline(self, request_id: int, *, by: User, reason: str, via: Channel) -> RateChangeRequest:
+    def decline(
+        self,
+        request_id: int,
+        *,
+        by: User,
+        reason: str,
+        via: Channel,
+        proxy: User | None = None,
+    ) -> RateChangeRequest:
         """Decline a request, with a reason the person who raised it will see. No rate changes."""
+        _check_proxy(by, proxy)
         reason = _required_text(reason, "a reason for declining")
         with self._db.write() as conn:
             request = _load_request(conn, request_id)
@@ -336,9 +389,9 @@ class RateDesk:
             updated = conn.execute(
                 "UPDATE rate_change_requests"
                 " SET status = 'declined', decided_by = ?, decided_at = ?, decided_via = ?,"
-                "     decline_reason = ?"
+                "     decline_reason = ?, decided_by_proxy = ?"
                 " WHERE id = ? AND status = 'pending'",
-                (by.id, now, via.value, reason, request.id),
+                (by.id, now, via.value, reason, None if proxy is None else proxy.id, request.id),
             )
             if updated.rowcount != 1:  # unreachable while we hold the write lock
                 raise AlreadyDecided(f"Request #{request.id} has already been decided")
@@ -435,6 +488,24 @@ class RateDesk:
 # ---------------------------------------------------------------------- helpers
 
 
+def _require_tester(caller: User) -> None:
+    if not caller.can_act_as_others:
+        raise NotPermitted(f"{caller.name} cannot act as anyone else")
+
+
+def _check_proxy(by: User, proxy: User | None) -> None:
+    """Acting as someone else needs the tester's capability, and only reaches ordinary people.
+
+    The API checks this when it builds the Actor; checking again here keeps the
+    rule true for any other caller of the service.
+    """
+    if proxy is None:
+        return
+    _require_tester(proxy)
+    if by.can_act_as_others:
+        raise InvalidRequest("a tester can only act as the ordinary demo people")
+
+
 def _check_approvable(request: RateChangeRequest, by: User) -> None:
     _check_decidable(request, by, "approve")
     if request.rate_in_force != request.current:
@@ -523,7 +594,9 @@ SELECT r.*,
        res.amount_pence AS resulting_pence,
        res.effective_from AS resulting_effective_from,
        res.superseded_at AS resulting_superseded_at,
-       nxt.id AS superseded_by_request_id
+       nxt.id AS superseded_by_request_id,
+       rp.name AS raised_by_proxy_name,
+       dp.name AS decided_by_proxy_name
 FROM rate_change_requests r
 JOIN projects p ON p.code = r.project_code
 JOIN trades t ON t.code = r.trade_code
@@ -535,6 +608,8 @@ LEFT JOIN rates cur
 LEFT JOIN rates prev ON prev.id = r.previous_rate_id
 LEFT JOIN rates res ON res.id = r.resulting_rate_id
 LEFT JOIN rate_change_requests nxt ON nxt.previous_rate_id = r.resulting_rate_id
+LEFT JOIN users rp ON rp.id = r.raised_by_proxy
+LEFT JOIN users dp ON dp.id = r.decided_by_proxy
 """
 
 _RATE_SELECT = """
@@ -552,8 +627,24 @@ def _load_request(conn: sqlite3.Connection, request_id: int) -> RateChangeReques
     return _request(row)
 
 
+_USER_COLUMNS = "SELECT id, name, can_raise, can_approve, can_act_as_others FROM users"
+
+
 def _user(row: sqlite3.Row) -> User:
-    return User(row["id"], row["name"], bool(row["can_raise"]), bool(row["can_approve"]))
+    return User(
+        row["id"],
+        row["name"],
+        bool(row["can_raise"]),
+        bool(row["can_approve"]),
+        bool(row["can_act_as_others"]),
+    )
+
+
+def _proxy(row: sqlite3.Row, column: str) -> User | None:
+    """The tester behind an action, from the joined columns; None for a normal action."""
+    if row[column] is None:
+        return None
+    return User(row[column], row[f"{column}_name"], False, False, can_act_as_others=True)
 
 
 def _optional_time(text: str | None) -> datetime | None:
@@ -601,6 +692,8 @@ def _request(row: sqlite3.Row) -> RateChangeRequest:
         decided_via=None if row["decided_via"] is None else Channel(row["decided_via"]),
         decline_reason=row["decline_reason"],
         outcome=outcome,
+        raised_by_proxy=_proxy(row, "raised_by_proxy"),
+        decided_by_proxy=_proxy(row, "decided_by_proxy"),
         rate_in_force=None if row["in_force_pence"] is None else Money(row["in_force_pence"]),
     )
 

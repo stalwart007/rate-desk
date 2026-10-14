@@ -6,8 +6,8 @@ authenticate, call the service, shape the answer.
 """
 
 # No `from __future__ import annotations`: FastAPI reads handler annotations at
-# startup, and `CurrentUser` is defined inside create_app, out of reach of
-# string annotations.
+# startup, and `CurrentUser` / `CurrentActor` are defined inside create_app, out
+# of reach of string annotations.
 
 import asyncio
 import contextlib
@@ -31,8 +31,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from rate_desk import explain
 from rate_desk.config import Settings
 from rate_desk.db import Database
-from rate_desk.domain import Channel, Event, Status, User
-from rate_desk.errors import InvalidRequest, RateDeskError, Unauthenticated
+from rate_desk.domain import Actor, Channel, Event, Status, User
+from rate_desk.errors import InvalidRequest, NotPermitted, RateDeskError, Unauthenticated
 from rate_desk.mcp_server import build_mcp_server
 from rate_desk.money import Money
 from rate_desk.schemas import (
@@ -204,7 +204,26 @@ def create_app(
             raise Unauthenticated("send a token in the Authorization header or ?access_token=")
         return service.authenticate(token)
 
+    def current_actor(
+        user: Annotated[User, Depends(current_user)],
+        act_as: Annotated[
+            int | None,
+            Header(
+                alias="X-Act-As",
+                description="Demo servers only: the tester acts as this person id.",
+            ),
+        ] = None,
+    ) -> Actor:
+        if act_as is None:
+            return Actor(user)
+        # Belt and braces: the capability only exists in demo data, and is only
+        # honoured when the server itself is running the demo.
+        if not settings.demo:
+            raise NotPermitted("acting as someone else is only possible on a demo server")
+        return service.act_as(user, act_as)
+
     CurrentUser = Annotated[User, Depends(current_user)]
+    CurrentActor = Annotated[Actor, Depends(current_actor)]
 
     # ------------------------------------------------------------------ pages
 
@@ -223,6 +242,11 @@ def create_app(
     def me(user: CurrentUser) -> MeOut:
         """Who your token says you are, and what you may do."""
         return MeOut.from_domain(user)
+
+    @app.get("/api/people", tags=["identity"], responses=ERRORS)
+    def people(user: CurrentUser) -> list[MeOut]:
+        """Demo tester only: the people the tester can act as, and what each may do."""
+        return [MeOut.from_domain(person) for person in service.people(caller=user)]
 
     @app.get("/api/projects", tags=["rates"], responses=ERRORS)
     def projects(_: CurrentUser) -> list[NamedOut]:
@@ -260,10 +284,11 @@ def create_app(
     # --------------------------------------------------------------- requests
 
     @app.post("/api/requests", status_code=201, tags=["requests"], responses=ERRORS)
-    def raise_request(body: RaiseRequestIn, user: CurrentUser) -> RequestOut:
+    def raise_request(body: RaiseRequestIn, actor: CurrentActor) -> RequestOut:
         """Ask for a rate to change. Nothing changes until somebody else approves it."""
         raised = service.raise_request(
-            by=user,
+            by=actor.user,
+            proxy=actor.proxy,
             project=body.project,
             trade=body.trade,
             current=None if body.current_rate is None else Money.parse(body.current_rate),
@@ -305,14 +330,17 @@ def create_app(
         return explain.explain(service.get_request(request_id))
 
     @app.post("/api/requests/{request_id}/approve", tags=["requests"], responses=ERRORS)
-    def approve(request_id: RequestId, user: CurrentUser) -> RequestOut:
+    def approve(request_id: RequestId, actor: CurrentActor) -> RequestOut:
         """Approve a request you did not raise. The new rate applies from this moment."""
-        return RequestOut.from_domain(service.approve(request_id, by=user, via=Channel.API))
+        approved = service.approve(request_id, by=actor.user, via=Channel.API, proxy=actor.proxy)
+        return RequestOut.from_domain(approved)
 
     @app.post("/api/requests/{request_id}/decline", tags=["requests"], responses=ERRORS)
-    def decline(request_id: RequestId, body: DeclineIn, user: CurrentUser) -> RequestOut:
+    def decline(request_id: RequestId, body: DeclineIn, actor: CurrentActor) -> RequestOut:
         """Decline a request you did not raise. The requester sees your reason."""
-        declined = service.decline(request_id, by=user, reason=body.reason, via=Channel.API)
+        declined = service.decline(
+            request_id, by=actor.user, reason=body.reason, via=Channel.API, proxy=actor.proxy
+        )
         return RequestOut.from_domain(declined)
 
     # ------------------------------------------------------------ live stream

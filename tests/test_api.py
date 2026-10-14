@@ -50,6 +50,7 @@ def test_every_api_call_needs_a_valid_token(client: TestClient) -> None:
         "name": "Tom",
         "can_raise": False,
         "can_approve": True,
+        "can_act_as_others": False,
     }
 
 

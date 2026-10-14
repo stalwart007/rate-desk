@@ -21,6 +21,10 @@ def _money(value: Money | None) -> str | None:
     return None if value is None else value.to_decimal_string()
 
 
+def _person(user: User | None) -> PersonOut | None:
+    return None if user is None else PersonOut.from_domain(user)
+
+
 class _Out(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -37,11 +41,18 @@ class PersonOut(_Out):
 class MeOut(PersonOut):
     can_raise: bool
     can_approve: bool
+    can_act_as_others: bool = Field(
+        description="Demo tester only: may act as the other demo people (X-Act-As header)."
+    )
 
     @classmethod
     def from_domain(cls, user: User) -> MeOut:
         return cls(
-            id=user.id, name=user.name, can_raise=user.can_raise, can_approve=user.can_approve
+            id=user.id,
+            name=user.name,
+            can_raise=user.can_raise,
+            can_approve=user.can_approve,
+            can_act_as_others=user.can_act_as_others,
         )
 
 
@@ -100,6 +111,12 @@ class RequestOut(_Out):
     stale: bool = Field(
         description="Pending, but the rate in force is no longer the rate it was raised against."
     )
+    raised_by_proxy: PersonOut | None = Field(
+        description="The demo tester, if they raised this acting as requested_by. Usually null."
+    )
+    decided_by_proxy: PersonOut | None = Field(
+        description="The demo tester, if they decided this acting as decided_by. Usually null."
+    )
 
     @classmethod
     def from_domain(cls, r: RateChangeRequest) -> RequestOut:
@@ -124,6 +141,8 @@ class RequestOut(_Out):
             outcome=None if r.outcome is None else OutcomeOut.from_domain(r.outcome),
             rate_in_force=_money(r.rate_in_force),
             stale=r.is_stale,
+            raised_by_proxy=_person(r.raised_by_proxy),
+            decided_by_proxy=_person(r.decided_by_proxy),
         )
 
 

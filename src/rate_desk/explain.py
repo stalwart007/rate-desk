@@ -71,10 +71,17 @@ def _via(channel: Channel | None) -> str:
     return " through the assistant" if channel is Channel.MCP else ""
 
 
+def _by_proxy(proxy: User | None, person: User) -> str:
+    return "" if proxy is None else f" ({proxy.name}, acting as {person.name})"
+
+
 def explain(r: RateChangeRequest) -> str:
     """The full story of one request, whatever state it is in."""
     lines: list[str] = []
-    asked = f"{r.requested_by.name}, on {when(r.requested_at)} (UK time)."
+    asked = (
+        f"{r.requested_by.name}{_by_proxy(r.raised_by_proxy, r.requested_by)}, "
+        f"on {when(r.requested_at)} (UK time)."
+    )
 
     if r.status is Status.PENDING:
         lines.append(f"Request #{r.id} is waiting for a decision.")
@@ -102,7 +109,8 @@ def explain(r: RateChangeRequest) -> str:
         assert r.decided_at is not None
         o = r.outcome
         lines.append(
-            f"Request #{r.id} was approved by {r.decided_by.name}{_via(r.decided_via)} "
+            f"Request #{r.id} was approved by {r.decided_by.name}"
+            f"{_by_proxy(r.decided_by_proxy, r.decided_by)}{_via(r.decided_via)} "
             f"on {when(r.decided_at)} (UK time)."
         )
         lines.append("")
@@ -132,7 +140,8 @@ def explain(r: RateChangeRequest) -> str:
         assert r.decided_at is not None
         assert r.decline_reason is not None
         lines.append(
-            f"Request #{r.id} was declined by {r.decided_by.name}{_via(r.decided_via)} "
+            f"Request #{r.id} was declined by {r.decided_by.name}"
+            f"{_by_proxy(r.decided_by_proxy, r.decided_by)}{_via(r.decided_via)} "
             f"on {when(r.decided_at)} (UK time). No rate changed."
         )
         lines.append("")
