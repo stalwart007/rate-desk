@@ -61,7 +61,8 @@ def hash_token(token: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
-    """What the wall dashboard needs on connect, all read from one consistent snapshot."""
+    """What the wall dashboard needs on connect, all read from one consistent snapshot:
+    every pending request, and the most recent decisions (up to 1,000)."""
 
     cursor: int  # id of the newest event already reflected below
     pending: list[RateChangeRequest]
@@ -460,7 +461,7 @@ class RateDesk:
             for row in rows
         ]
 
-    def snapshot(self, *, recent: int = 30) -> Snapshot:
+    def snapshot(self, *, recent: int = 1000) -> Snapshot:
         with self._db.read() as conn:
             cursor = int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0])
             pending = conn.execute(

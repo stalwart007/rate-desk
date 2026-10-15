@@ -47,9 +47,11 @@
                text-transform: uppercase; letter-spacing: .1em; display: flex; gap: 12px;
                align-items: baseline; }
   section h2 .count { color: var(--text); font-size: 34px; letter-spacing: 0; }
-  .list { display: flex; flex-direction: column; gap: 14px; overflow: hidden; flex: 1; min-height: 0; }
+  /* Every record is on the page; each column scrolls. Newest stays at the top. */
+  .list { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; flex: 1; min-height: 0;
+          padding-right: 6px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  .list > * { flex-shrink: 0; }
   .empty { color: var(--muted); font-size: 22px; padding: 28px 0; }
-  .more { color: var(--muted); font-size: 18px; font-weight: 600; padding: 4px 4px 0; }
 
   .card { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--amber);
           border-radius: 10px; padding: 16px 20px; }
@@ -169,7 +171,7 @@
     <div class="list" id="pending" aria-live="polite"></div>
   </section>
   <section aria-labelledby="decided-title">
-    <h2 id="decided-title">Recently decided</h2>
+    <h2 id="decided-title">Decided <span class="count num" id="decided-count">0</span></h2>
     <div class="list" id="decided" aria-live="polite"></div>
   </section>
 </main>
@@ -316,40 +318,19 @@ function card(r, decided) {
   return c;
 }
 
-function fit(list, one, many) {
-  // Never clip silently: a card the wall cannot show is replaced by a count.
-  const bottom = list.getBoundingClientRect().bottom;
-  const cards = [...list.children];
-  let hidden = 0;
-  while (cards.length && cards[cards.length - 1].getBoundingClientRect().bottom > bottom) {
-    cards.pop().remove();
-    hidden++;
-  }
-  if (!hidden) return;
-  const more = el("div", "more");
-  list.append(more);
-  for (;;) {
-    more.textContent = `+ ${hidden} ${hidden === 1 ? one : many} not shown`;
-    if (more.getBoundingClientRect().bottom <= bottom || !cards.length) return;
-    cards.pop().remove();   // the count line itself needs room
-    hidden++;
-  }
-}
-
 function render() {
   const all = [...requests.values()];
   // Newest first, so a request arriving is always seen arriving, at the top.
   const pending = all.filter((r) => r.status === "pending").sort((a, b) => b.id - a.id);
   const decided = all.filter((r) => r.status !== "pending")
-    .sort((a, b) => b.decided_at.localeCompare(a.decided_at)).slice(0, 12);
+    .sort((a, b) => b.decided_at.localeCompare(a.decided_at));
 
   $("pending-count").textContent = pending.length;
+  $("decided-count").textContent = decided.length;
   $("pending").replaceChildren(...(pending.length ? pending.map((r) => card(r, false))
     : [el("div", "empty", "Nothing waiting.")]));
   $("decided").replaceChildren(...(decided.length ? decided.map((r) => card(r, true))
     : [el("div", "empty", "No decisions yet.")]));
-  fit($("pending"), "older request", "older requests");
-  fit($("decided"), "earlier decision", "earlier decisions");
   $("last-event").textContent = lastEventId ? `Last event #${lastEventId}` : "No events yet";
   $("last-update").textContent = lastMessageAt ? `Updated ${lastMessageAt.toLocaleTimeString("en-GB")}` : "";
 }

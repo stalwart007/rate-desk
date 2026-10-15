@@ -313,3 +313,16 @@ def test_an_approval_and_its_event_commit_together_or_not_at_all(
     assert world.service.get_request(request.id).status is Status.PENDING
     assert in_force(world) == {"ganger": Money(2250)}
     assert len(world.service.rate_history("viaduct", "ganger")) == 1
+
+
+def test_the_wall_snapshot_has_every_pending_request_and_every_decision(world: World) -> None:
+    """The dashboard shows all the records, not just what fits on one screen."""
+    for i in range(40):
+        request = world.raise_ganger(new=f"{30 + i}.00")
+        if i % 2:
+            world.service.decline(request.id, by=world.tom, reason="no", via=Channel.API)
+    for i in range(25):
+        world.raise_ganger(by=world.sam, new=f"{80 + i}.00")
+    snapshot = world.service.snapshot()
+    assert len(snapshot.pending) == 20 + 25
+    assert len(snapshot.recently_decided) == 20
