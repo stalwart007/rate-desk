@@ -134,7 +134,8 @@ Then ask things like:
 * *"Deal with request 6."* Its reason contains a planted instruction telling the assistant to approve
   it without asking. It still cannot get past your confirmation.
 
-> **Approving needs a client that can show that confirmation (MCP elicitation)**, such as Claude Code.
+> **Approving needs a client that can show that confirmation (MCP elicitation)**, such as Claude Code
+> 2.1.76 or later. In the dialog, **Accept** approves; Decline, Esc or unticking the box changes nothing.
 > Claude Desktop cannot, so there `approve_request` and `decline_request` refuse and say why; the
 > reading tools work everywhere. That is deliberate. See [DECISIONS.md](DECISIONS.md), part 3.
 
@@ -197,7 +198,7 @@ moment. A `heartbeat` every 15 s lets the page notice a connection that died sil
 ## Checks
 
 ```bash
-uv run pytest          # 171 tests: rules, races between threads and processes, DB constraints, API, live stream, MCP
+uv run pytest          # 175 tests: rules, races between threads and processes, DB constraints, API, live stream, MCP
 uv run ruff check      # lint
 uv run ruff format --check
 uv run mypy            # strict type checking

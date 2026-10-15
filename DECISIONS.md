@@ -18,8 +18,10 @@
 
 ## 3. The approve tool
 
-<!-- Whether it should exist, in what form, and why. Threats, options rejected, residual risks. -->
+<!-- Whether it should exist, in what form, and why. Threats, options rejected, residual risks.
+     Include what real testing in Claude Code taught you (tick + Accept became Accept). -->
 
 ## 4. Gaps
 
-<!-- What I did not build. What in the brief was unclear or wrong. -->
+<!-- What I did not build. What in the brief was unclear or wrong.
+     The README points here for the demo tester token: say why it does not weaken four-eyes. -->
