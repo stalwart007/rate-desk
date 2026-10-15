@@ -21,6 +21,7 @@ The approve tool exists, in a constrained form. See DECISIONS.md part 3:
 # annotations at registration, and Resolve(...) names a function defined in
 # the enclosing scope, which string annotations cannot see.
 
+import logging
 from collections.abc import Callable
 from typing import Annotated
 
@@ -45,6 +46,8 @@ from rate_desk.domain import Channel, Status, User
 from rate_desk.errors import RateDeskError
 from rate_desk.schemas import NamedOut, ProjectRatesOut, RateOut
 from rate_desk.service import RateDesk
+
+log = logging.getLogger(__name__)
 
 INSTRUCTIONS = """\
 Rate Desk holds requests to change pay rates at TAG Construction. Nobody changes a rate
@@ -98,19 +101,24 @@ RequestId = Annotated[int, Field(ge=1, le=2**63 - 1, description="The request nu
 LIST_LIMIT = 100
 
 
+# Pressing Accept on the dialog is the human's confirmation. The box starts
+# ticked: an earlier version started it unticked and needed a tick *and*
+# Accept, and in Claude Code's terminal dialog (Space ticks, Enter accepts)
+# people pressed Accept and were told nothing was confirmed. Unticking still
+# works as a "no", as do Decline and Esc. Either way only the human answers.
 class ConfirmApproval(BaseModel):
     approve: bool = Field(
-        default=False,
+        default=True,
         title="Approve this rate change",
-        description="Tick to approve. Leave unticked, or cancel, and nothing changes.",
+        description="Press Accept to approve. Untick, decline or cancel and nothing changes.",
     )
 
 
 class ConfirmDecline(BaseModel):
     decline: bool = Field(
-        default=False,
+        default=True,
         title="Decline with the reason shown",
-        description="Tick to decline. Leave unticked, or cancel, and nothing changes.",
+        description="Press Accept to decline. Untick, decline or cancel and nothing changes.",
     )
 
 
@@ -256,9 +264,17 @@ def build_mcp_server(
         approves if they tick it. Call this only when the human has asked you to
         approve this specific request.
         """
-        if not (isinstance(answer, AcceptedElicitation) and answer.data.approve):
-            return f"Not approved: it was not confirmed, so nothing changed. ({answer.action})"
         user = current_user()
+        confirmed = isinstance(answer, AcceptedElicitation) and answer.data.approve
+        log.info(
+            "approve_request #%s: %s answered %s%s",
+            request_id,
+            user.name,
+            answer.action,
+            f" (approve={answer.data.approve})" if isinstance(answer, AcceptedElicitation) else "",
+        )
+        if not confirmed:
+            return f"Not approved: you did not confirm it, so nothing changed. ({answer.action})"
         approved = run(lambda: service.approve(request_id, by=user, via=Channel.MCP))
         return explain.explain(approved)
 
@@ -281,9 +297,17 @@ def build_mcp_server(
         Call this only when the human has asked you to decline this specific request.
         Draft the reason with them; it is shown to the requester word for word.
         """
-        if not (isinstance(answer, AcceptedElicitation) and answer.data.decline):
-            return f"Not declined: it was not confirmed, so nothing changed. ({answer.action})"
         user = current_user()
+        confirmed = isinstance(answer, AcceptedElicitation) and answer.data.decline
+        log.info(
+            "decline_request #%s: %s answered %s%s",
+            request_id,
+            user.name,
+            answer.action,
+            f" (decline={answer.data.decline})" if isinstance(answer, AcceptedElicitation) else "",
+        )
+        if not confirmed:
+            return f"Not declined: you did not confirm it, so nothing changed. ({answer.action})"
         declined = run(lambda: service.decline(request_id, by=user, reason=reason, via=Channel.MCP))
         return explain.explain(declined)
 

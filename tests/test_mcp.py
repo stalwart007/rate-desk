@@ -152,7 +152,7 @@ async def test_approve_happens_only_after_the_human_confirms(world: World, mode:
     [
         Human("decline"),
         Human("cancel"),
-        Human("accept", {"approve": False}),  # submitted without ticking the box
+        Human("accept", {"approve": False}),  # accepted, but unticked the box first
     ],
     ids=["declined", "cancelled", "unticked"],
 )
@@ -166,6 +166,23 @@ async def test_without_the_humans_yes_nothing_changes(
     assert text(result).startswith("Not approved")
     assert world.service.get_request(request.id).status is Status.PENDING
     assert world.service.rates_in_force("viaduct")[2][0].amount == Money(2250)
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("content", [{}, {"approve": True}], ids=["box-left-alone", "box-ticked"])
+async def test_pressing_accept_is_the_confirmation(
+    world: World, mode: str, content: dict[str, Any]
+) -> None:
+    """Found by testing in Claude Code: people press Accept without touching the box.
+
+    The box starts ticked, so Accept approves whether the client sends the
+    untouched default or leaves the field out.
+    """
+    request = world.raise_ganger()
+    async with connect(world, world.tom, human=Human("accept", content), mode=mode) as client:
+        result = await client.call_tool("approve_request", {"request_id": request.id})
+    assert not result.is_error, text(result)
+    assert world.service.get_request(request.id).status is Status.APPROVED
 
 
 @pytest.mark.parametrize("mode", MODES)
