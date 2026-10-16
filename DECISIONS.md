@@ -19,8 +19,14 @@ binaries that haven't been scanned and approved, because uv downloads pre-built 
 the internet.
 
 ### Docker
-I didn't really need Docker for this task, because SQLite and uv leave nothing much to containerise.
-I only used it to deploy on Fly.io, which runs images, and I already have a Fly.io account.
+I didn't really need Docker for this task, because SQLite and uv leave nothing much to containerise:
+uv installs the right Python version and the exact locked library versions itself, and SQLite is built
+into Python, so there is no database server to run. So `uv run rate-desk serve --demo` already gives
+every machine the same setup a container would. Docker would only add something for reviewers to
+install (Docker Desktop), and slow down the edit-and-test loop. With Postgres, I'd normally use Docker
+(docker-compose) just to start the database server, and with pip and the system's own Python I'd want
+Docker to pin the Python version. This project has neither. I only used Docker to deploy on Fly.io,
+which runs images, and I already have a Fly.io account.
 
 ### SQLite, not a Postgres server
 I used SQLite because there isn't much data and there aren't many users, so I don't need the
@@ -31,6 +37,20 @@ or passwords, so how do we make it secure? It is just a file on the server's pri
 security comes from who can reach that file and what the program lets them do. Only the program can
 access the file, and every way to the data needs a token, which decides what that person is allowed to
 do. HTTPS is forced, so tokens and other sensitive information can't be read on a public network.
+
+### Money
+- Stored as an integer number of pence, in STRICT columns, so `2550.5` is refused by the database
+  itself.
+- On the wire as decimal strings (`"24.00"`), because JSON numbers become floats in most clients. The
+  API refuses JSON numbers for money.
+- More than two decimal places is refused, not rounded. Silently rounding someone's pay is worse than
+  an error.
+- The only arithmetic on money is subtraction ("by how much"), which is exact on integers. The one
+  division, the percentage, is for display only, never stored, and rounded half-up to one place.
+
+I rejected floats, because 0.1 + 0.2 ≠ 0.3. I rejected Python `Decimal` in a NUMERIC column, because
+SQLite has no exact decimal type and quietly stores non-integers as floats. And I rejected decimal
+text: it is exact, but it turns comparisons and arithmetic in SQL into string handling.
 
 ### FastAPI, not Flask or Django
 I needed three things: long-lived SSE connections to keep pushing changes to the dashboard, the MCP
@@ -97,25 +117,25 @@ I used Server-Sent Events (SSE).
   process are never seen.
 
 ### Running it on one Linux box
-1. systemd keeps the process running and restarts it if it crashes.
-2. Caddy in front gives HTTPS, renewing the TLS certificates automatically, and passes the live stream
-   through without buffering.
-3. The SQLite file sits on the local disk, because its locking isn't safe on network drives.
-4. Litestream streams changes to off-site storage, and I'd rehearse restores.
-5. The open-file limit is raised, because every wall screen is an open connection. Logs go to journald,
-   and an uptime checker watches `/healthz`.
-6. A deploy is a quick restart; the screens reconnect and replay what they missed.
-7. The live demo is the same shape on Fly.io: one machine with a persistent disk, because SQLite means
-   one writer.
+- systemd keeps the process running and restarts it if it crashes.
+- Caddy in front gives HTTPS, renewing the TLS certificates automatically, and passes the live stream
+  through without buffering.
+- The SQLite file sits on the local disk, because its locking isn't safe on network drives.
+- Litestream streams changes to off-site storage, and I'd rehearse restores.
+- The open-file limit is raised, because every wall screen is an open connection. Logs go to journald,
+  and an uptime checker watches `/healthz`.
+- A deploy is a quick restart; the screens reconnect and replay what they missed.
+- The live demo is the same shape on Fly.io: one machine with a persistent disk, because SQLite means
+  one writer.
 
 ### What breaks first as it gets busier
-- Not the writes; that's a few dozen a day.
-- First, availability: it is one machine, so it needs backups and a standby.
-- Then open connections: first the open-file limit, then one CPU core sending each event to every
-  screen.
-- Going past one machine means Postgres, and three things to handle. Postgres can commit events out of
-  id order, so the feed needs care. MCP sessions need sticky routing. And the MCP confirmation's retry
-  data needs a key shared across machines.
+1. Not the writes; that's a few dozen a day.
+2. First, availability: it is one machine, so it needs backups and a standby.
+3. Then open connections: first the open-file limit, then one CPU core sending each event to every
+   screen.
+4. Going past one machine means Postgres, and three things to handle. Postgres can commit events out of
+   id order, so the feed needs care. MCP sessions need sticky routing. And the MCP confirmation's retry
+   data needs a key shared across machines.
 
 ## 3. The approve tool
 
@@ -152,7 +172,7 @@ An approval or verification code sent by email or SMS. It would work, but it is 
 - **Real sign-in:** company login (SSO, and OAuth so a remote Claude can sign in), token expiry, and a
   command to revoke or rotate a token. Today tokens never expire, and the demo tokens are public on
   purpose.
-- **Rate limiting,** so nobody can hammer the API or guess tokens.
+- **Rate limiting:** so nobody can hammer the API or guess tokens.
 - **Effective dates:** a change applies the moment it is approved, as the brief says. Payroll usually
   wants "from the start of next pay week", and sometimes backdating.
 - **Charge rate beside pay rate:** TAG's margin is the gap between what the client pays and what the
@@ -175,8 +195,8 @@ An approval or verification code sent by email or SMS. It would work, but it is 
   reasoned, not measured.
 
 ### What was unclear or wrong in the brief
-1. Multiple requests for the same rate aren't covered. I allow all of them, and once one is approved,
-   the others go stale. The alternative, one waiting request per rate, is simpler but lets one person
-   block another.
-2. "Who asked" as a field doesn't fit "somebody else approves". If the requester's name is just a
-   field, anyone can type someone else's name, so I take identity from the token instead.
+- Multiple requests for the same rate aren't covered. I allow all of them, and once one is approved,
+  the others go stale. The alternative, one waiting request per rate, is simpler but lets one person
+  block another.
+- "Who asked" as a field doesn't fit "somebody else approves". If the requester's name is just a
+  field, anyone can type someone else's name, so I take identity from the token instead.
