@@ -55,7 +55,7 @@ acting as, raise requests, and approve or decline from the cards, all on the liv
 * Everything the tester does is recorded twice: as the person (`decided_by`) and as the tester
   (`decided_by_proxy`), and the cards say **via tester**.
 * It only works on a demo server (`--demo` / `RATE_DESK_DEMO=1`). Elsewhere `X-Act-As` is refused,
-  and `add-user` cannot create a tester. See DECISIONS.md, part 4.
+  and `add-user` cannot create a tester.
 
 The same works from a terminal with an `X-Act-As: <person id>` header (ids from `GET /api/people`).
 
