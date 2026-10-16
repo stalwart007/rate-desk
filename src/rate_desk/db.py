@@ -16,7 +16,7 @@ from pathlib import Path
 
 # Each file moves the schema up one version; PRAGMA user_version records where
 # a database is. Never edit a released file: add the next one.
-MIGRATIONS = ["schema.sql", "migrations/002_tester.sql"]
+MIGRATIONS = ["schema.sql", "migrations/002_tester.sql", "migrations/003_tester_rules.sql"]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

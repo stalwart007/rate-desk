@@ -226,6 +226,8 @@ const params = new URLSearchParams(location.hash.slice(1) || location.search.sli
 const token = params.get("token");
 
 const requests = new Map();      // id -> request, exactly as the API returns it
+const SHOW_AT_MOST = 1000;       // cards per column; matches the decisions the server sends
+let decidedTotal = 0;            // every decision ever made, not only those loaded
 const freshUntil = new Map();    // id -> time until which the card is highlighted
 const shown = new Set();         // "pending:12" etc. Cards animate in once, not on every redraw
 let lastEventId = null;
@@ -274,6 +276,7 @@ function delta(r) {
 
 function card(r, decided) {
   const c = el("article", "card");
+  c.dataset.id = r.id;
   const key = (decided ? "decided:" : "pending:") + r.id;
   if (!shown.has(key)) { shown.add(key); c.classList.add("enter"); }
   if (decided) c.classList.add(r.status);
@@ -318,19 +321,57 @@ function card(r, decided) {
   return c;
 }
 
+// Someone scrolled down to read: remember which card was at the top of their view.
+// At the very top, nothing is remembered, so a new request is seen arriving.
+function anchorOf(list) {
+  if (list.scrollTop === 0) return null;
+  const top = list.getBoundingClientRect().top;
+  for (const c of list.children) {
+    const box = c.getBoundingClientRect();
+    if (box.bottom > top) return { id: c.dataset.id, offset: box.top - top };
+  }
+  return null;
+}
+
+function restoreAnchor(list, anchor) {
+  const c = anchor && anchor.id && list.querySelector(`[data-id="${anchor.id}"]`);
+  if (c) list.scrollTop += c.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.offset;
+}
+
+function fill(list, items, decided, empty) {
+  const shown = items.slice(0, SHOW_AT_MOST);
+  list.replaceChildren(...(shown.length ? shown.map((r) => card(r, decided)) : [el("div", "empty", empty)]));
+  if (items.length > shown.length) {
+    list.append(el("div", "meta", `Showing the newest ${shown.length}. The API lists the rest.`));
+  }
+}
+
 function render() {
   const all = [...requests.values()];
   // Newest first, so a request arriving is always seen arriving, at the top.
   const pending = all.filter((r) => r.status === "pending").sort((a, b) => b.id - a.id);
   const decided = all.filter((r) => r.status !== "pending")
     .sort((a, b) => b.decided_at.localeCompare(a.decided_at));
+  // Keep memory bounded: the oldest decisions beyond what can be shown are forgotten.
+  for (const r of decided.slice(SHOW_AT_MOST)) requests.delete(r.id);
+
+  // Redrawing must not move what someone is reading, or take away their keyboard focus.
+  const anchors = [anchorOf($("pending")), anchorOf($("decided"))];
+  const focused = document.activeElement && document.activeElement.closest(".card");
+  const cls = document.activeElement && document.activeElement.className;
+  const focus = focused && cls && { id: focused.dataset.id, cls: cls.split(" ")[0] };
 
   $("pending-count").textContent = pending.length;
-  $("decided-count").textContent = decided.length;
-  $("pending").replaceChildren(...(pending.length ? pending.map((r) => card(r, false))
-    : [el("div", "empty", "Nothing waiting.")]));
-  $("decided").replaceChildren(...(decided.length ? decided.map((r) => card(r, true))
-    : [el("div", "empty", "No decisions yet.")]));
+  $("decided-count").textContent = Math.max(decidedTotal, decided.length);
+  fill($("pending"), pending, false, "Nothing waiting.");
+  fill($("decided"), decided, true, "No decisions yet.");
+
+  restoreAnchor($("pending"), anchors[0]);
+  restoreAnchor($("decided"), anchors[1]);
+  if (focus) {
+    const again = document.querySelector(`.card[data-id="${focus.id}"] .${focus.cls}`);
+    if (again) again.focus({ preventScroll: true });   // put focus back without moving the view
+  }
   $("last-event").textContent = lastEventId ? `Last event #${lastEventId}` : "No events yet";
   $("last-update").textContent = lastMessageAt ? `Updated ${lastMessageAt.toLocaleTimeString("en-GB")}` : "";
 }
@@ -363,6 +404,8 @@ function onEvent(e) {
   lastMessageAt = new Date();
   const data = JSON.parse(e.data);
   const r = data.request;
+  const before = requests.get(r.id);
+  if (r.status !== "pending" && (!before || before.status === "pending")) decidedTotal += 1;
   freshUntil.set(r.id, Date.now() + 15000);
   requests.set(r.id, r);
   render();
@@ -383,6 +426,7 @@ function connect() {
     const snap = JSON.parse(e.data);
     requests.clear();
     for (const r of [...snap.pending, ...snap.recently_decided]) requests.set(r.id, r);
+    decidedTotal = snap.decided_total;
     lastEventId = e.lastEventId;
     lastMessageAt = new Date();
     setStatus("live", "Live");
@@ -513,6 +557,10 @@ async function startTesting() {
     toast(err.message, err.code);
     return;
   }
+  if (!people.length) {
+    toast("There is nobody to act as on this server.", "tester");
+    return;
+  }
   testing = true;
   document.body.classList.add("testing");
   actingAs = people.find((p) => p.can_raise) || people[0];
@@ -570,7 +618,8 @@ if (!token) {
     .catch(connect);
 }
 window.addEventListener("hashchange", () => location.reload());  // a new token was pasted in
-window.addEventListener("resize", render);
+let resizeTimer = null;                                          // redraw once resizing settles
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 150); });
 tick();
 setInterval(tick, 1000);
 setInterval(render, 30000);   // keep "12 min ago" honest and let highlights fade

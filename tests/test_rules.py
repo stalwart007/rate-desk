@@ -326,3 +326,36 @@ def test_the_wall_snapshot_has_every_pending_request_and_every_decision(world: W
     snapshot = world.service.snapshot()
     assert len(snapshot.pending) == 20 + 25
     assert len(snapshot.recently_decided) == 20
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["\x00", "Nights\x00", "bell\x07", "\u200b", "\u200b \u200b"],
+    ids=["nul", "nul-inside", "control", "zero-width", "zero-width-and-space"],
+)
+def test_invisible_or_control_text_is_not_a_reason(world: World, reason: str) -> None:
+    """Found in review: SQLite stops counting at NUL, so the service must refuse it first."""
+    with pytest.raises(InvalidRequest):
+        world.service.raise_request(
+            by=world.dave,
+            project="viaduct",
+            trade="ganger",
+            current=Money(2250),
+            requested=Money(2400),
+            reason=reason,
+        )
+    request = world.raise_ganger()
+    with pytest.raises(InvalidRequest):
+        world.service.decline(request.id, by=world.tom, reason=reason, via=Channel.API)
+
+
+def test_line_breaks_and_tabs_are_fine_in_a_reason(world: World) -> None:
+    request = world.service.raise_request(
+        by=world.dave,
+        project="viaduct",
+        trade="ganger",
+        current=Money(2250),
+        requested=Money(2400),
+        reason="Line one\r\nLine two\twith a tab",
+    )
+    assert "Line two" in request.reason

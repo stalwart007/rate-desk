@@ -69,7 +69,8 @@ RETRY_MS = 2000
 HEARTBEAT_SECONDS = 15.0
 
 # SQLite integers are 64-bit; a bigger id is not "not found", it is nonsense.
-RequestId = Annotated[int, Path(ge=1, le=2**63 - 1)]
+MAX_ID = 2**63 - 1
+RequestId = Annotated[int, Path(ge=1, le=MAX_ID)]
 
 ERRORS: dict[int | str, dict[str, object]] = {
     status: {"model": ErrorOut} for status in (401, 403, 404, 409)
@@ -80,6 +81,7 @@ class SnapshotOut(BaseModel):
     cursor: int
     pending: list[RequestOut]
     recently_decided: list[RequestOut]
+    decided_total: int
 
     @classmethod
     def from_domain(cls, snap: Snapshot) -> "SnapshotOut":
@@ -87,6 +89,7 @@ class SnapshotOut(BaseModel):
             cursor=snap.cursor,
             pending=[RequestOut.from_domain(r) for r in snap.pending],
             recently_decided=[RequestOut.from_domain(r) for r in snap.recently_decided],
+            decided_total=snap.decided_total,
         )
 
 
@@ -210,6 +213,8 @@ def create_app(
             int | None,
             Header(
                 alias="X-Act-As",
+                ge=1,
+                le=MAX_ID,
                 description="Demo servers only: the tester acts as this person id.",
             ),
         ] = None,
@@ -246,6 +251,8 @@ def create_app(
     @app.get("/api/people", tags=["identity"], responses=ERRORS)
     def people(user: CurrentUser) -> list[MeOut]:
         """Demo tester only: the people the tester can act as, and what each may do."""
+        if not settings.demo:
+            raise NotPermitted("the tester only exists on a demo server")
         return [MeOut.from_domain(person) for person in service.people(caller=user)]
 
     @app.get("/api/projects", tags=["rates"], responses=ERRORS)
@@ -349,7 +356,9 @@ def create_app(
     async def stream(
         _: Annotated[User, Depends(stream_user)],
         last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
-        since: Annotated[int | None, Query(description="Resume after this event id.")] = None,
+        since: Annotated[
+            int | None, Query(ge=0, le=MAX_ID, description="Resume after this event id.")
+        ] = None,
     ) -> AsyncIterator[ServerSentEvent]:
         """Server-Sent Events for the wall dashboard.
 
@@ -364,7 +373,7 @@ def create_app(
         try:
             cursor = _parse_event_id(last_event_id) if last_event_id is not None else since
             latest = await asyncio.to_thread(service.latest_event_id)
-            if cursor is None or cursor > latest:
+            if not cursor or cursor > latest:
                 # A new screen, or one that remembers a database that has since been reset.
                 snap = await asyncio.to_thread(service.snapshot)
                 yield ServerSentEvent(
@@ -407,10 +416,12 @@ def create_app(
 
 
 def _parse_event_id(value: str) -> int | None:
+    """A browser's Last-Event-ID, or None if it is not a usable id (it then gets a snapshot)."""
     try:
-        return int(value)
+        number = int(value)
     except ValueError:
         return None
+    return number if 1 <= number <= MAX_ID else None
 
 
 class AccessLogMiddleware:

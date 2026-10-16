@@ -293,7 +293,7 @@ async def test_decline_shows_the_human_the_reason_before_sending_it(
     assert declined.decided_via is Channel.MCP
 
 
-@pytest.mark.parametrize("reason", [" ", "x" * 2001])
+@pytest.mark.parametrize("reason", [" ", "x" * 2001, "\x00", "\u200b"])
 async def test_a_reason_that_would_be_refused_is_refused_before_asking(
     world: World, reason: str
 ) -> None:

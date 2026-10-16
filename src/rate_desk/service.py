@@ -14,6 +14,7 @@ import hashlib
 import json
 import secrets
 import sqlite3
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -67,6 +68,7 @@ class Snapshot:
     cursor: int  # id of the newest event already reflected below
     pending: list[RateChangeRequest]
     recently_decided: list[RateChangeRequest]
+    decided_total: int  # all decided requests, including any beyond the ones listed
 
 
 class RateDesk:
@@ -471,7 +473,14 @@ class RateDesk:
                 f"{_REQUEST_SELECT} WHERE r.status <> 'pending' ORDER BY r.decided_at DESC LIMIT ?",
                 (recent,),
             ).fetchall()
-        return Snapshot(cursor, [_request(r) for r in pending], [_request(r) for r in decided])
+            decided_total = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM rate_change_requests WHERE status <> 'pending'"
+                ).fetchone()[0]
+            )
+        return Snapshot(
+            cursor, [_request(r) for r in pending], [_request(r) for r in decided], decided_total
+        )
 
     # ------------------------------------------------------------------ internal
 
@@ -536,7 +545,12 @@ def _check_decidable(request: RateChangeRequest, by: User, verb: str) -> None:
 
 def _required_text(text: str, what: str) -> str:
     text = text.strip()
-    if not text:
+    # Control characters (NUL above all: SQLite stops counting at it) are refused,
+    # apart from line breaks and tabs, which a written reason can contain.
+    if any(unicodedata.category(c) == "Cc" and c not in "\n\r\t" for c in text):
+        raise InvalidRequest(f"{what} contains control characters")
+    # Invisible text, such as only zero-width spaces, counts as empty.
+    if not any(not c.isspace() and unicodedata.category(c) != "Cf" for c in text):
         raise InvalidRequest(f"{what} is required")
     if len(text) > MAX_TEXT:
         raise InvalidRequest(f"{what} must be at most {MAX_TEXT} characters")

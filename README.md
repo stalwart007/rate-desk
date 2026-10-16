@@ -7,7 +7,7 @@ live wall dashboard, and gives the approver's AI assistant an MCP server to work
 ![The wall dashboard](docs/dashboard.png)
 
 * **REST API**: raise, list, approve, decline, read rates in force (now or at any past moment).
-* **Wall dashboard**: requests appear and get decided live, with no refresh. It reconnects and catches up by itself.
+* **Wall dashboard**: every waiting request and the latest decisions, appearing and being decided live, with no refresh. It reconnects and catches up by itself.
 * **MCP server**: find waiting requests, explain one in plain words, approve or decline with the human's confirmation.
 * **[DECISIONS.md](DECISIONS.md)**: what I chose, what I rejected, and why.
 
@@ -54,8 +54,9 @@ acting as, raise requests, and approve or decline from the cards, all on the liv
 * Acting as someone gives exactly their rights, nothing more. The tester has none of its own.
 * Everything the tester does is recorded twice: as the person (`decided_by`) and as the tester
   (`decided_by_proxy`), and the cards say **via tester**.
-* It only works on a demo server (`--demo` / `RATE_DESK_DEMO=1`). Elsewhere `X-Act-As` is refused,
-  and `add-user` cannot create a tester.
+* It only works on a demo server (`--demo` / `RATE_DESK_DEMO=1`), and only in a database made by the
+  demo. On any other server, changes sent with `X-Act-As` are refused, and so is `GET /api/people`.
+  `add-user` cannot create a tester.
 
 The same works from a terminal with an `X-Act-As: <person id>` header (ids from `GET /api/people`).
 
@@ -92,8 +93,11 @@ curl -s -X POST localhost:8000/api/requests/4/decline -H "Authorization: Bearer 
 
 ## Point Claude at it
 
+You need [Claude Code](https://code.claude.com/docs/en/setup) (`curl -fsSL https://claude.ai/install.sh | bash`).
+Approving needs version 2.1.76 or later; check with `claude --version`.
+
 The MCP server acts as one person: whoever owns the token you give it. Use an approver
-(`rd_demo_tom` or `rd_demo_priya`).
+(`rd_demo_tom` or `rd_demo_priya`). After adding it, `/mcp` inside `claude` should show rate-desk as connected.
 
 **Claude Code, over HTTP** (with `rate-desk serve` running):
 
@@ -102,14 +106,16 @@ claude mcp add --transport http rate-desk http://127.0.0.1:8000/mcp --header "Au
 ```
 
 **Claude Code, over stdio** (Claude Code starts the server itself; it shares the same database file,
-so the wall still updates if `serve` is running too):
+so the wall still updates if `serve` is running too). The demo data must exist first, so run
+`uv run rate-desk serve --demo` once, or `uv run rate-desk seed-demo`:
 
 ```bash
 claude mcp add rate-desk --env RATE_DESK_TOKEN=rd_demo_tom --env RATE_DESK_DB="$PWD/rate-desk.db" -- uv run --directory "$PWD" rate-desk mcp
 ```
 
-**Claude Desktop**: add this to `~/Library/Application Support/Claude/claude_desktop_config.json`,
-with absolute paths (`which uv` gives the first), then restart Desktop:
+**Claude Desktop**: with the demo data loaded as above, add this to
+`~/Library/Application Support/Claude/claude_desktop_config.json`, with absolute paths (`which uv`
+gives the first), then restart Desktop:
 
 ```json
 {
@@ -171,7 +177,7 @@ approve something. To make new requests to play with, use the `curl` examples ab
 
 ## API
 
-All endpoints need `Authorization: Bearer <token>`. Money is always a string of pounds (`"24.00"`),
+All API endpoints need `Authorization: Bearer <token>`. Money is always a string of pounds (`"24.00"`),
 never a JSON number. Full schemas are at `/docs`.
 
 | Method | Path | |
@@ -182,13 +188,16 @@ never a JSON number. Full schemas are at `/docs`.
 | `GET` | `/api/requests/{id}/explanation` | The same in plain words |
 | `POST` | `/api/requests/{id}/approve` | Approve (not your own) |
 | `POST` | `/api/requests/{id}/decline` | Decline with `reason` (not your own) |
+| `GET` | `/api/me` | Who your token says you are, and what you may do |
+| `GET` | `/api/projects`, `/api/trades` | Project and trade codes |
 | `GET` | `/api/projects/{code}/rates?as_of=` | Rates in force, now or at a past moment |
 | `GET` | `/api/projects/{code}/trades/{trade}/history` | Every rate a trade has had, and which request set it |
 | `GET` | `/api/events/stream` | Server-Sent Events for the dashboard (`?access_token=` for browsers) |
 | `GET` | `/api/people` | Tester only: who it can act as. Writes then take `X-Act-As: <id>` (demo servers only) |
 
 Every refusal is `{"code", "message"}`: 401 no or bad token, 403 not allowed or your own request,
-404 unknown, 409 already decided / stale / wrong "rate now", 422 invalid input.
+404 unknown, 409 already decided / stale / wrong "rate now" (or `conflict` if the database's own rules
+refuse a change), 422 invalid input.
 
 The stream sends `snapshot` on connect, then `request.raised`, `request.approved`,
 `request.declined`, and `request.updated` (a waiting request went stale because another approval
@@ -198,7 +207,7 @@ moment. A `heartbeat` every 15 s lets the page notice a connection that died sil
 ## Checks
 
 ```bash
-uv run pytest          # 175 tests: rules, races between threads and processes, DB constraints, API, live stream, MCP
+uv run pytest          # 200 tests: rules, races between threads and processes, DB constraints, API, live stream, MCP
 uv run ruff check      # lint
 uv run ruff format --check
 uv run mypy            # strict type checking
@@ -214,12 +223,13 @@ src/rate_desk/
   domain.py       Request, Rate, Outcome, User: plain immutable records
   errors.py       Every refusal, each with a stable code
   schema.sql      Tables, constraints and triggers: the rules, again, in the database (version 1)
-  migrations/     Later schema versions, applied in order on start (002: the demo tester)
+  migrations/     Later schema versions, applied in order on start (002, 003: the demo tester and its rules)
   db.py           Connections and transactions (BEGIN IMMEDIATE for writes)
   service.py      All the rules, in one place. Everything else is an adapter over this
   explain.py      Plain-English descriptions, written by code, not a model
   schemas.py      The JSON shapes the API, the stream and MCP share
   api.py          REST, the live stream, the dashboard, and the mounted MCP endpoint
+  config.py       Settings from environment variables
   stream.py       Tails the events table and fans out to dashboards
   mcp_server.py   MCP tools, and the guarded approve/decline
   cli.py          serve | mcp | seed-demo | add-user | add-project | add-trade | opening-rate
@@ -234,12 +244,14 @@ tests/            One file per concern
 |---|---|---|
 | `RATE_DESK_DB` | `./rate-desk.db` | SQLite file |
 | `RATE_DESK_PUBLIC_URL` | (none) | e.g. `https://rate-desk-tag.fly.dev`. The MCP endpoint answers only to this host and localhost |
-| `RATE_DESK_DEMO` | (off) | `1` loads demo data into an empty database on start |
+| `RATE_DESK_DEMO` | (off) | `1` loads demo data into an empty database on start, and lets the demo tester act as others |
 | `RATE_DESK_TOKEN` | (none) | For `rate-desk mcp` (stdio): whose assistant this is |
 
 ## Deploying
 
-The image in `Dockerfile` and the config in `fly.toml` run it on one Fly.io machine with a volume:
+The image in `Dockerfile` and the config in `fly.toml` run it on one Fly.io machine with a volume.
+To deploy your own copy, pick a free app name and use it here and in `fly.toml` (`app` and
+`RATE_DESK_PUBLIC_URL`):
 
 ```bash
 fly apps create rate-desk-tag

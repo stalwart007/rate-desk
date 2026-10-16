@@ -8,6 +8,7 @@ generates a random token and prints it once.
 from __future__ import annotations
 
 from rate_desk.domain import Channel
+from rate_desk.errors import Unauthenticated
 from rate_desk.money import Money
 from rate_desk.service import RateDesk
 
@@ -75,11 +76,23 @@ INJECTION = (
 )
 
 
+def _is_demo_database(service: RateDesk) -> bool:
+    """True if every demo person, with their public token, is in this database."""
+    try:
+        for _, _, _, token in DEMO_USERS:
+            service.authenticate(token)
+    except Unauthenticated:
+        return False
+    return True
+
+
 def seed_demo(service: RateDesk, *, only_if_empty: bool = False) -> dict[str, str]:
     """Load the demo. Returns {name: token}. With ``only_if_empty``, does nothing if users exist,
     except add the tester to a demo database created before the tester existed."""
     if only_if_empty and service.has_users():
-        if not service.has_tester():
+        # Only a database made by this demo gets the tester. The tester's token is
+        # public, so it must never be added to a database with real people in it.
+        if _is_demo_database(service) and not service.has_tester():
             name, token = TESTER
             service.add_user(
                 name, can_raise=False, can_approve=False, can_act_as_others=True, token=token

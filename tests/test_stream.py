@@ -89,6 +89,7 @@ def test_a_new_screen_gets_a_snapshot_then_each_change_as_it_happens(http: httpx
 
 
 def test_a_screen_that_reconnects_gets_exactly_what_it_missed(http: httpx.Client) -> None:
+    raise_ganger(http, new="23.10")  # so the screen has a real event id to remember
     response = stream(http)
     seen = next(sse(response))["id"]
     response.close()  # the wall's Wi-Fi drops...
@@ -197,3 +198,33 @@ def test_shutdown_ends_open_streams_at_once(http: httpx.Client, live_server: Liv
     assert not live_server.thread.is_alive()
     assert time.monotonic() - started < 1.0  # not the 1 s graceful-shutdown timeout
     response.close()
+
+
+@pytest.mark.parametrize("bad", ["-5", "0", "abc", str(2**63), "99999999999999999999999"])
+def test_a_nonsense_last_event_id_gets_a_fresh_snapshot(http: httpx.Client, bad: str) -> None:
+    response = stream(http, **{"Last-Event-ID": bad})
+    try:
+        assert next(sse(response))["event"] == "snapshot"
+    finally:
+        response.close()
+
+
+@pytest.mark.parametrize("bad", ["-1", str(2**63), "-100000000000000000000000"])
+def test_a_nonsense_since_is_refused_before_the_stream_starts(http: httpx.Client, bad: str) -> None:
+    response = http.get("/api/events/stream", params={"access_token": WALL, "since": bad})
+    assert response.status_code == 422
+
+
+def test_the_snapshot_counts_every_decision_even_beyond_those_listed(
+    http: httpx.Client, live_server: LiveServer
+) -> None:
+    service = live_server.world.service
+    for i in range(3):
+        request_id = raise_ganger(http, new=f"3{i}.00")
+        service.decline(request_id, by=live_server.world.tom, reason="no", via=Channel.API)
+    response = stream(http)
+    try:
+        snapshot = json.loads(next(sse(response))["data"])
+        assert snapshot["decided_total"] == 3
+    finally:
+        response.close()

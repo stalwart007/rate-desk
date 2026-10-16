@@ -17,11 +17,17 @@ from fastapi.testclient import TestClient
 from rate_desk.api import create_app
 from rate_desk.config import Settings
 from rate_desk.db import SCHEMA_VERSION, Database
-from rate_desk.domain import Channel, Status
-from rate_desk.errors import FourEyesViolation, InvalidRequest, NotFound, NotPermitted
+from rate_desk.domain import Channel
+from rate_desk.errors import (
+    FourEyesViolation,
+    InvalidRequest,
+    NotFound,
+    NotPermitted,
+    Unauthenticated,
+)
 from rate_desk.explain import explain
 from rate_desk.money import Money
-from rate_desk.seed import seed_demo
+from rate_desk.seed import DEMO_USERS, seed_demo
 from rate_desk.service import RateDesk
 from tests.conftest import World
 
@@ -203,7 +209,7 @@ def test_a_version_1_database_upgrades_in_place_keeping_its_data(tmp_path: Path)
     assert service.get_user(1).can_act_as_others is False
     conn = db.connect()
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 3
         conn.execute(
             "INSERT INTO rate_change_requests (project_code, trade_code, requested_pence,"
             " reason, requested_by, requested_at) VALUES ('p', 't', 100, 'r', 1, 'now')"
@@ -215,11 +221,64 @@ def test_a_version_1_database_upgrades_in_place_keeping_its_data(tmp_path: Path)
         conn.close()
 
 
-def test_an_existing_demo_gets_its_tester_on_upgrade(tmp_path: Path) -> None:
-    service = RateDesk(Database(tmp_path / "demo.db"))
-    Database(tmp_path / "demo.db").migrate()
-    service.add_user("Someone", can_raise=True, can_approve=False)
+def test_a_demo_database_made_before_the_tester_gets_it_on_upgrade(tmp_path: Path) -> None:
+    db = Database(tmp_path / "demo.db")
+    db.migrate()
+    service = RateDesk(db)
+    for name, can_raise, can_approve, token in DEMO_USERS:  # the demo, before the tester existed
+        service.add_user(name, can_raise=can_raise, can_approve=can_approve, token=token)
     assert seed_demo(service, only_if_empty=True) == {"Tester": "rd_demo_tester"}
     assert service.authenticate("rd_demo_tester").can_act_as_others
     assert seed_demo(service, only_if_empty=True) == {}  # only once
-    assert service.list_requests(status=Status.PENDING) == []  # nothing else was seeded
+
+
+def test_a_real_database_never_gets_the_public_tester(tmp_path: Path) -> None:
+    """Found in review: the tester's token is public, so it must not appear in real data."""
+    db = Database(tmp_path / "real.db")
+    db.migrate()
+    service = RateDesk(db)
+    service.add_user("Real Approver", can_raise=False, can_approve=True)
+    assert seed_demo(service, only_if_empty=True) == {}
+    assert not service.has_tester()
+    with pytest.raises(Unauthenticated):
+        service.authenticate("rd_demo_tester")
+
+
+def test_the_people_list_is_only_on_a_demo_server(world: World) -> None:
+    app = create_app(Settings(db_path=world.db_path, demo=False), clock=world.clock)
+    with TestClient(app) as client:
+        response = client.get("/api/people", headers={"Authorization": "Bearer t-tester"})
+    assert response.status_code == 403
+    assert "demo server" in response.json()["message"]
+
+
+@pytest.mark.parametrize("value", ["0", "-1", str(2**63), "abc"])
+def test_impossible_act_as_ids_are_invalid_not_server_errors(
+    demo_client: TestClient, value: str
+) -> None:
+    headers = {"Authorization": "Bearer t-tester", "X-Act-As": value}
+    response = demo_client.post("/api/requests", json=GANGER, headers=headers)
+    assert response.status_code == 422
+
+
+def test_the_database_guards_the_tester_columns(world: World) -> None:
+    """Schema v3: the proxy columns can only ever name the tester, on a real decision."""
+    request = world.raise_ganger()
+    conn = Database(world.db_path).connect()
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="decide for someone else"):
+            conn.execute(
+                "UPDATE rate_change_requests SET decided_by_proxy = ? WHERE id = ?",
+                (world.tester.id, request.id),  # still pending
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="raise a request for someone else"):
+            conn.execute(
+                "INSERT INTO rate_change_requests (project_code, trade_code, current_pence,"
+                " requested_pence, reason, requested_by, requested_at, raised_by_proxy)"
+                " VALUES ('viaduct', 'ganger', 2250, 2400, 'x', ?, 'now', ?)",
+                (world.dave.id, world.sam.id),  # Sam is not a tester
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="fixed when the user is created"):
+            conn.execute("UPDATE users SET can_act_as_others = 1 WHERE id = ?", (world.dave.id,))
+    finally:
+        conn.close()
